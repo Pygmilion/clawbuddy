@@ -4,7 +4,7 @@ use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::menu::{Menu, MenuItem, MenuEvent};
-use tauri::tray::TrayIconBuilder;
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::time::{sleep, Instant};
 
@@ -79,6 +79,15 @@ async fn toggle_window(app: AppHandle) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+// 直接显示主窗口（取消最小化 + 显示 + 聚焦），用于托盘左键/菜单「显示窗口」。
+fn show_main_window(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1784,28 +1793,36 @@ pub fn run() {
             });
 
             let show = MenuItem::with_id(app, "show", "显示窗口", true, None::<&str>)?;
-            let hide = MenuItem::with_id(app, "hide", "隐藏窗口", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show, &hide, &quit])?;
+            let menu = Menu::with_items(app, &[&show, &quit])?;
+
+            // 菜单栏镂空模板图标（透明背景黑色剪影，macOS 自动适配明/暗）。
+            let tray_icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray-template.png"))?;
 
             TrayIconBuilder::new()
+                .icon(tray_icon)
+                .icon_as_template(true)
                 .tooltip("ClawBuddy")
                 .menu(&menu)
-                .show_menu_on_left_click(true)
+                // 左键直接显示窗口；右键弹出菜单。
+                .show_menu_on_left_click(false)
                 .on_menu_event(move |app: &AppHandle, event: MenuEvent| {
                     match event.id().as_ref() {
-                        "show" => {
-                            let _ = toggle_window(app.clone());
-                        }
-                        "hide" => {
-                            if let Some(window) = app.get_webview_window("main") {
-                                let _ = window.hide();
-                            }
-                        }
+                        "show" => show_main_window(app),
                         "quit" => {
                             let _ = app.exit(0);
                         }
                         _ => {}
+                    }
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        show_main_window(tray.app_handle());
                     }
                 })
                 .build(app)?;
