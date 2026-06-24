@@ -269,6 +269,64 @@ fn bundled_feishu_plugin_dir() -> Option<std::path::PathBuf> {
         .find(|p| p.join("openclaw.plugin.json").exists())
 }
 
+// 随包插件里的 `node_modules/openclaw` 是指向打包机项目目录的绝对软链，在别的电脑上会失效，
+// 导致插件 `import 'openclaw'` 报 "Cannot find package 'openclaw'"。这里把失效的软链重新指向
+// 随包的 openclaw 运行时目录。
+fn bundled_openclaw_pkg_dir() -> Option<std::path::PathBuf> {
+    let dir = bundled_script_path().parent()?.to_path_buf();
+    if dir.exists() {
+        Some(dir)
+    } else {
+        None
+    }
+}
+
+fn fix_dangling_openclaw_symlinks(dir: &std::path::Path, bundled_oc: &std::path::Path) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(meta) = fs::symlink_metadata(&path) else {
+            continue;
+        };
+        let ft = meta.file_type();
+        if ft.is_symlink() {
+            // 仅修复名为 openclaw 且已失效（target 不存在）的软链。
+            if entry.file_name() == "openclaw" && !path.exists() {
+                let _ = fs::remove_file(&path);
+                let _ = std::os::unix::fs::symlink(bundled_oc, &path);
+            }
+            // 不进入软链，避免环路。
+        } else if ft.is_dir() {
+            fix_dangling_openclaw_symlinks(&path, bundled_oc);
+        }
+    }
+}
+
+fn fix_bundled_plugin_symlinks(state_dir: &std::path::Path) {
+    let Some(bundled_oc) = bundled_openclaw_pkg_dir() else {
+        return;
+    };
+    // 通用兜底：在 state/node_modules 放一个 openclaw 软链。插件里 import 'openclaw' / 'openclaw/plugin-sdk/*'
+    // 会沿 node_modules 逐级向上解析，最终命中这里——无论插件自带的软链是失效还是被打包器丢弃。
+    let nm = state_dir.join("node_modules");
+    let _ = fs::create_dir_all(&nm);
+    let link = nm.join("openclaw");
+    let needs = match fs::symlink_metadata(&link) {
+        Ok(_) => !link.exists(), // 存在但失效 → 重建
+        Err(_) => true,          // 不存在 → 建
+    };
+    if needs {
+        let _ = fs::remove_file(&link);
+        let _ = fs::remove_dir_all(&link);
+        let _ = std::os::unix::fs::symlink(&bundled_oc, &link);
+    }
+    // 顺带把插件内已存在但失效的 openclaw 软链也重新指向。
+    fix_dangling_openclaw_symlinks(&state_dir.join("extensions"), &bundled_oc);
+    fix_dangling_openclaw_symlinks(&state_dir.join("npm").join("projects"), &bundled_oc);
+}
+
 // 首次启动时把随包的飞书插件复制到状态目录的 extensions/feishu（已存在则跳过），
 // 这样无需联网装 clawhub 插件，飞书频道开箱即用。
 fn copy_bundled_feishu_into_state(state_dir: &std::path::Path) {
@@ -369,6 +427,7 @@ fn provision_gateway_config(state_dir: &std::path::Path) -> Result<(), String> {
     seed_agent_files(&workspace);
     copy_bundled_feishu_into_state(state_dir);
     copy_bundled_npm_projects_into_state(state_dir);
+    fix_bundled_plugin_symlinks(state_dir);
 
     let config_path = state_dir.join("openclaw.json");
     let workspace_str = workspace.to_string_lossy().to_string();
