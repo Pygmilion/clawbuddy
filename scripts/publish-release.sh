@@ -11,7 +11,9 @@ DMG="src-tauri/target/release/bundle/dmg/ClawBuddy_0.1.0_aarch64.dmg"
 NOTES="docs/release-notes-v0.1.0.md"
 
 GH="$(command -v gh || true)"
-if [ -z "$GH" ] && [ -x /tmp/gh_portable/bin/gh ]; then GH=/tmp/gh_portable/bin/gh; fi
+for cand in "$HOME/.local/bin/gh" /opt/homebrew/bin/gh /usr/local/bin/gh /tmp/gh_portable/bin/gh; do
+  if [ -z "$GH" ] && [ -x "$cand" ]; then GH="$cand"; fi
+done
 if [ -z "$GH" ]; then
   echo "未找到 gh CLI。请先安装并登录：gh auth login" >&2
   exit 1
