@@ -1,8 +1,28 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-BIN_DIR="$ROOT_DIR/bundled/bin"
+# Tauri packages resources from src-tauri/bundled/ (see tauri.conf.json),
+# so the runtime (node + gateway) must live there to end up inside the .app.
+BIN_DIR="$ROOT_DIR/src-tauri/bundled/bin"
 mkdir -p "$BIN_DIR"
+
+# Ensure the bundled Node.js runtime is present in the resource path.
+# Prefer an already-downloaded copy under the repo's root bundled/bin/node.
+ensure_node_bin() {
+  if [ -x "$BIN_DIR/node" ]; then
+    return 0
+  fi
+  if [ -x "$ROOT_DIR/bundled/bin/node" ]; then
+    cp "$ROOT_DIR/bundled/bin/node" "$BIN_DIR/node"
+    chmod +x "$BIN_DIR/node"
+    return 0
+  fi
+  echo "[bundle-gateway] 警告：未找到 Node.js 运行时（$BIN_DIR/node）。" >&2
+  echo "  请将一份 Node.js (≥22.19, 与目标架构一致) 放到 bundled/bin/node 后重试。" >&2
+  return 1
+}
+
+ensure_node_bin || true
 
 copy_runtime_bin() {
   local src="$ROOT_DIR/src-tauri/runtime"
