@@ -291,6 +291,46 @@ fn copy_bundled_feishu_into_state(state_dir: &std::path::Path) {
         .status();
 }
 
+// 定位随包预置的 npm/projects 目录（StepFun provider 等以 npm 项目形式安装的插件）。
+fn bundled_npm_projects_dir() -> Option<std::path::PathBuf> {
+    let app_root = resolve_app_root();
+    let cwd = std::env::current_dir().unwrap_or_else(|_| ".".into());
+    let candidates = [
+        app_root.join("..").join("Resources").join("bundled").join("npm").join("projects"),
+        app_root.join("bundled").join("npm").join("projects"),
+        cwd.join("src-tauri").join("bundled").join("npm").join("projects"),
+        cwd.join("bundled").join("npm").join("projects"),
+    ];
+    candidates.into_iter().find(|p| p.exists())
+}
+
+// 首次启动时把随包的 npm 插件（StepFun provider、微信插件等）复制到状态目录，
+// 这样无需联网装 npm 插件即可用。已存在的项目目录会跳过，保留用户状态。
+fn copy_bundled_npm_projects_into_state(state_dir: &std::path::Path) {
+    let Some(src_projects) = bundled_npm_projects_dir() else {
+        return;
+    };
+    let dest_projects = state_dir.join("npm").join("projects");
+    let _ = fs::create_dir_all(&dest_projects);
+    let Ok(entries) = fs::read_dir(&src_projects) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if !entry.path().is_dir() {
+            continue;
+        }
+        let dest = dest_projects.join(entry.file_name());
+        if dest.exists() {
+            continue;
+        }
+        let _ = std::process::Command::new("cp")
+            .arg("-R")
+            .arg(entry.path())
+            .arg(&dest)
+            .status();
+    }
+}
+
 // 为 agent 工作区预置默认的角色/记忆文件（仅当文件不存在时写入，避免覆盖用户编辑）。
 fn seed_agent_files(workspace: &std::path::Path) {
     let defaults: [(&str, &str); 5] = [
@@ -328,6 +368,7 @@ fn provision_gateway_config(state_dir: &std::path::Path) -> Result<(), String> {
     fs::create_dir_all(&workspace).map_err(|e| format!("无法创建工作区目录: {e}"))?;
     seed_agent_files(&workspace);
     copy_bundled_feishu_into_state(state_dir);
+    copy_bundled_npm_projects_into_state(state_dir);
 
     let config_path = state_dir.join("openclaw.json");
     let workspace_str = workspace.to_string_lossy().to_string();
@@ -358,7 +399,8 @@ fn provision_gateway_config(state_dir: &std::path::Path) -> Result<(), String> {
         },
         "plugins": {
             "entries": {
-                "feishu": { "enabled": true }
+                "feishu": { "enabled": true },
+                "stepfun": { "enabled": true }
             }
         }
     });
@@ -422,6 +464,9 @@ fn provision_gateway_config(state_dir: &std::path::Path) -> Result<(), String> {
                         entries
                             .entry("feishu")
                             .or_insert_with(|| serde_json::json!({ "enabled": true }));
+                        entries
+                            .entry("stepfun")
+                            .or_insert_with(|| serde_json::json!({ "enabled": true }));
                     }
                 }
                 let _ = fs::write(&config_path, serde_json::to_string_pretty(&existing).unwrap_or(raw));
@@ -478,6 +523,10 @@ fn start_gateway_process() -> Result<(), String> {
     fs::create_dir_all(&state_dir).map_err(|e| format!("无法创建状态目录: {e}"))?;
     provision_gateway_config(&state_dir)?;
     ensure_stepfun_provider(&state_dir);
+    // 若已保存 key 但配置里还没有 apiKey（如旧版本升级而来），回填到配置，确保 provider 能拿到。
+    if let Some(key) = read_stepfun_key() {
+        write_stepfun_apikey_to_config(&state_dir, &key);
+    }
 
     let port = GATEWAY_PORT.to_string();
     println!(
@@ -644,7 +693,35 @@ async fn set_stepfun_key(manager: State<'_, GatewayManager>, key: String) -> Res
         return Err("API Key 不能为空".to_string());
     }
     write_stepfun_key(&key)?;
+    // 同时把 key 写进 openclaw 配置（models.providers.stepfun.apiKey）。
+    // provider 插件通过配置解析 key，不依赖进程环境变量，跨重启/跨机器更可靠。
+    write_stepfun_apikey_to_config(&gateway_state_dir(), &key);
     manager.restart().await
+}
+
+// 把 StepFun key 写入 openclaw 配置的 models.providers.stepfun.apiKey（并补 baseUrl、启用插件）。
+fn write_stepfun_apikey_to_config(state_dir: &std::path::Path, key: &str) {
+    let _ = update_config(state_dir, |root| {
+        let models = root.entry("models").or_insert_with(|| serde_json::json!({}));
+        if let Some(models) = models.as_object_mut() {
+            let providers = models.entry("providers").or_insert_with(|| serde_json::json!({}));
+            if let Some(providers) = providers.as_object_mut() {
+                let stepfun = providers.entry("stepfun").or_insert_with(|| serde_json::json!({}));
+                if let Some(obj) = stepfun.as_object_mut() {
+                    obj.insert("apiKey".into(), serde_json::json!(key));
+                    obj.entry("baseUrl")
+                        .or_insert_with(|| serde_json::json!(STEPFUN_BASE_URL));
+                }
+            }
+        }
+        let plugins = root.entry("plugins").or_insert_with(|| serde_json::json!({}));
+        if let Some(plugins) = plugins.as_object_mut() {
+            let entries = plugins.entry("entries").or_insert_with(|| serde_json::json!({}));
+            if let Some(entries) = entries.as_object_mut() {
+                entries.insert("stepfun".into(), serde_json::json!({ "enabled": true }));
+            }
+        }
+    });
 }
 
 // 查询 StepFun 账户余额/充值/赠送金额（GET /v1/accounts）。

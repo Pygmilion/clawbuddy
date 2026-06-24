@@ -422,6 +422,7 @@ export function SettingsPage({ onClearChat }: SettingsPageProps) {
         {cpMsg && <div className="status">{cpMsg}</div>}
       </section>
 
+      {import.meta.env.DEV && (
       <section className="settings-section">
         <h2>OpenClaw 升级</h2>
         <p className="hint">检查并升级到最新版 OpenClaw（升级会自动重启网关，期间对话/绑定短暂中断）。</p>
@@ -441,6 +442,7 @@ export function SettingsPage({ onClearChat }: SettingsPageProps) {
         </div>
         {upgradeMsg && <div className="status">{upgradeMsg}</div>}
       </section>
+      )}
 
       <section className="settings-section">
         <h2>高级配置（claw 配置文件）</h2>
