@@ -254,6 +254,43 @@ fn get_node_path() -> Result<String, String> {
     Err("未找到 Node.js，请安装后重试".to_string())
 }
 
+// 定位随包预置的飞书插件目录（生产在 Resources/bundled/extensions/feishu，开发在 src-tauri/bundled/...）。
+fn bundled_feishu_plugin_dir() -> Option<std::path::PathBuf> {
+    let app_root = resolve_app_root();
+    let cwd = std::env::current_dir().unwrap_or_else(|_| ".".into());
+    let candidates = [
+        app_root.join("..").join("Resources").join("bundled").join("extensions").join("feishu"),
+        app_root.join("bundled").join("extensions").join("feishu"),
+        cwd.join("src-tauri").join("bundled").join("extensions").join("feishu"),
+        cwd.join("bundled").join("extensions").join("feishu"),
+    ];
+    candidates
+        .into_iter()
+        .find(|p| p.join("openclaw.plugin.json").exists())
+}
+
+// 首次启动时把随包的飞书插件复制到状态目录的 extensions/feishu（已存在则跳过），
+// 这样无需联网装 clawhub 插件，飞书频道开箱即用。
+fn copy_bundled_feishu_into_state(state_dir: &std::path::Path) {
+    let dest = state_dir.join("extensions").join("feishu");
+    // 已正确安装（含 dist）则不动。
+    if dest.join("dist").exists() {
+        return;
+    }
+    let Some(src) = bundled_feishu_plugin_dir() else {
+        return;
+    };
+    let ext_dir = state_dir.join("extensions");
+    let _ = fs::create_dir_all(&ext_dir);
+    // 清理可能的残缺目录，避免 cp -R 把源目录嵌套进去。
+    let _ = fs::remove_dir_all(&dest);
+    let _ = std::process::Command::new("cp")
+        .arg("-R")
+        .arg(&src)
+        .arg(&dest)
+        .status();
+}
+
 // 为 agent 工作区预置默认的角色/记忆文件（仅当文件不存在时写入，避免覆盖用户编辑）。
 fn seed_agent_files(workspace: &std::path::Path) {
     let defaults: [(&str, &str); 5] = [
@@ -290,6 +327,7 @@ fn provision_gateway_config(state_dir: &std::path::Path) -> Result<(), String> {
     let workspace = state_dir.join("workspace");
     fs::create_dir_all(&workspace).map_err(|e| format!("无法创建工作区目录: {e}"))?;
     seed_agent_files(&workspace);
+    copy_bundled_feishu_into_state(state_dir);
 
     let config_path = state_dir.join("openclaw.json");
     let workspace_str = workspace.to_string_lossy().to_string();
@@ -316,6 +354,11 @@ fn provision_gateway_config(state_dir: &std::path::Path) -> Result<(), String> {
         "models": {
             "providers": {
                 "stepfun": { "baseUrl": STEPFUN_BASE_URL }
+            }
+        },
+        "plugins": {
+            "entries": {
+                "feishu": { "enabled": true }
             }
         }
     });
@@ -361,6 +404,24 @@ fn provision_gateway_config(state_dir: &std::path::Path) -> Result<(), String> {
                     if let Some(obj) = stepfun.as_object_mut() {
                         obj.entry("baseUrl")
                             .or_insert_with(|| serde_json::json!(STEPFUN_BASE_URL));
+                    }
+                }
+                // 确保飞书插件在配置里启用（插件文件随包预置到 extensions/feishu）。
+                {
+                    let plugins = existing
+                        .as_object_mut()
+                        .unwrap()
+                        .entry("plugins")
+                        .or_insert_with(|| serde_json::json!({}));
+                    let entries = plugins
+                        .as_object_mut()
+                        .unwrap()
+                        .entry("entries")
+                        .or_insert_with(|| serde_json::json!({}));
+                    if let Some(entries) = entries.as_object_mut() {
+                        entries
+                            .entry("feishu")
+                            .or_insert_with(|| serde_json::json!({ "enabled": true }));
                     }
                 }
                 let _ = fs::write(&config_path, serde_json::to_string_pretty(&existing).unwrap_or(raw));
