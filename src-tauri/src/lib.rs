@@ -459,7 +459,8 @@ fn provision_gateway_config(state_dir: &std::path::Path) -> Result<(), String> {
         "plugins": {
             "entries": {
                 "feishu": { "enabled": true },
-                "stepfun": { "enabled": true }
+                "stepfun": { "enabled": true },
+                "openclaw-weixin": { "enabled": true }
             }
         },
         "tools": {
@@ -530,6 +531,9 @@ fn provision_gateway_config(state_dir: &std::path::Path) -> Result<(), String> {
                             .or_insert_with(|| serde_json::json!({ "enabled": true }));
                         entries
                             .entry("stepfun")
+                            .or_insert_with(|| serde_json::json!({ "enabled": true }));
+                        entries
+                            .entry("openclaw-weixin")
                             .or_insert_with(|| serde_json::json!({ "enabled": true }));
                     }
                 }
