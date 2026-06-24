@@ -402,6 +402,11 @@ fn provision_gateway_config(state_dir: &std::path::Path) -> Result<(), String> {
                 "feishu": { "enabled": true },
                 "stepfun": { "enabled": true }
             }
+        },
+        "tools": {
+            "web": {
+                "search": { "enabled": true, "provider": "duckduckgo" }
+            }
         }
     });
 
@@ -467,6 +472,29 @@ fn provision_gateway_config(state_dir: &std::path::Path) -> Result<(), String> {
                         entries
                             .entry("stepfun")
                             .or_insert_with(|| serde_json::json!({ "enabled": true }));
+                    }
+                }
+                // 默认启用网页搜索（DuckDuckGo，无需 API key）。仅在用户未配置时补默认值。
+                {
+                    let tools = existing
+                        .as_object_mut()
+                        .unwrap()
+                        .entry("tools")
+                        .or_insert_with(|| serde_json::json!({}));
+                    let web = tools
+                        .as_object_mut()
+                        .unwrap()
+                        .entry("web")
+                        .or_insert_with(|| serde_json::json!({}));
+                    let search = web
+                        .as_object_mut()
+                        .unwrap()
+                        .entry("search")
+                        .or_insert_with(|| serde_json::json!({}));
+                    if let Some(obj) = search.as_object_mut() {
+                        obj.entry("enabled").or_insert_with(|| serde_json::json!(true));
+                        obj.entry("provider")
+                            .or_insert_with(|| serde_json::json!("duckduckgo"));
                     }
                 }
                 let _ = fs::write(&config_path, serde_json::to_string_pretty(&existing).unwrap_or(raw));
@@ -567,7 +595,16 @@ fn start_gateway_process() -> Result<(), String> {
     let stdout = child.stdout.ok_or("无法读取 Gateway stdout")?;
     let stderr = child.stderr.ok_or("无法读取 Gateway stderr")?;
 
+    // 把网关输出落到日志文件，便于「导出诊断日志」抓现场（每次启动覆盖为当前会话）。
+    let log_dir = state_dir.join("logs");
+    let _ = fs::create_dir_all(&log_dir);
+    let log_file = std::sync::Arc::new(std::sync::Mutex::new(
+        std::fs::File::create(log_dir.join("gateway.log")).ok(),
+    ));
+
+    let log_out = log_file.clone();
     std::thread::spawn(move || {
+        use std::io::Write;
         let mut out = stdout;
         let mut buf = [0u8; 1024];
         while let Ok(n) = out.read(&mut buf) {
@@ -576,11 +613,18 @@ fn start_gateway_process() -> Result<(), String> {
             }
             if let Ok(text) = std::str::from_utf8(&buf[..n]) {
                 eprint!("{}", text);
+                if let Ok(mut guard) = log_out.lock() {
+                    if let Some(f) = guard.as_mut() {
+                        let _ = f.write_all(&buf[..n]);
+                    }
+                }
             }
         }
     });
 
+    let log_err = log_file.clone();
     std::thread::spawn(move || {
+        use std::io::Write;
         let mut err = stderr;
         let mut buf = [0u8; 1024];
         while let Ok(n) = err.read(&mut buf) {
@@ -589,6 +633,11 @@ fn start_gateway_process() -> Result<(), String> {
             }
             if let Ok(text) = std::str::from_utf8(&buf[..n]) {
                 eprint!("{}", text);
+                if let Ok(mut guard) = log_err.lock() {
+                    if let Some(f) = guard.as_mut() {
+                        let _ = f.write_all(&buf[..n]);
+                    }
+                }
             }
         }
     });
@@ -1489,6 +1538,140 @@ async fn set_claw_config(manager: State<'_, GatewayManager>, raw: String) -> Res
     manager.restart().await
 }
 
+// 递归脱敏：把 apiKey / secret / token / password 等字段的值替换为占位符。
+fn redact_secrets(v: &mut serde_json::Value) {
+    match v {
+        serde_json::Value::Object(map) => {
+            for (k, val) in map.iter_mut() {
+                let kl = k.to_lowercase();
+                let sensitive = kl.contains("apikey")
+                    || kl.contains("secret")
+                    || kl.contains("token")
+                    || kl.contains("password");
+                if sensitive {
+                    if let serde_json::Value::String(s) = val {
+                        let n = s.chars().count();
+                        *val = serde_json::json!(format!("<redacted:{n} chars>"));
+                        continue;
+                    }
+                }
+                redact_secrets(val);
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            for it in arr.iter_mut() {
+                redact_secrets(it);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn tail_file(path: &std::path::Path, max_bytes: usize) -> String {
+    match fs::read(path) {
+        Ok(bytes) => {
+            let start = bytes.len().saturating_sub(max_bytes);
+            String::from_utf8_lossy(&bytes[start..]).to_string()
+        }
+        Err(_) => "(无)".to_string(),
+    }
+}
+
+// 一键导出诊断报告（已脱敏）：系统信息 + 网关状态 + 已装插件 + 配置 + 日志，写到下载目录。
+#[tauri::command]
+async fn export_diagnostics() -> Result<String, String> {
+    let state_dir = gateway_state_dir();
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    let mut s = String::new();
+    s.push_str("# ClawBuddy 诊断报告\n\n");
+    s.push_str(&format!("- 生成(epoch秒): {ts}\n"));
+    s.push_str(&format!("- 平台: {}/{}\n", std::env::consts::OS, std::env::consts::ARCH));
+    s.push_str(&format!("- 状态目录: {}\n", state_dir.display()));
+    s.push_str(&format!("- StepFun Key 已配置: {}\n", read_stepfun_key().is_some()));
+
+    let script = bundled_script_path();
+    s.push_str(&format!("- openclaw 脚本: {}\n", script.display()));
+    if let Some(pkg) = script.parent().map(|p| p.join("package.json")) {
+        if let Ok(raw) = fs::read_to_string(&pkg) {
+            if let Ok(j) = serde_json::from_str::<serde_json::Value>(&raw) {
+                s.push_str(&format!(
+                    "- openclaw 版本: {}\n",
+                    j.get("version").and_then(|v| v.as_str()).unwrap_or("?")
+                ));
+            }
+        }
+    }
+    if let Ok(node) = get_node_path() {
+        if let Ok(o) = Command::new(&node).arg("--version").output() {
+            s.push_str(&format!("- node: {}\n", String::from_utf8_lossy(&o.stdout).trim()));
+        }
+    }
+
+    // 网关健康
+    let url = format!("http://127.0.0.1:{GATEWAY_PORT}/health");
+    let health = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(4))
+        .build()
+    {
+        Ok(c) => match c.get(&url).send().await {
+            Ok(r) => {
+                let code = r.status().as_u16();
+                format!("{code} {}", r.text().await.unwrap_or_default())
+            }
+            Err(e) => format!("连接失败: {e}"),
+        },
+        Err(e) => format!("client err: {e}"),
+    };
+    s.push_str(&format!("- 网关 /health: {health}\n\n"));
+
+    s.push_str("## 已安装插件\n");
+    if let Ok(entries) = fs::read_dir(state_dir.join("npm").join("projects")) {
+        for e in entries.flatten() {
+            s.push_str(&format!("- npm/projects: {}\n", e.file_name().to_string_lossy()));
+        }
+    }
+    if let Ok(entries) = fs::read_dir(state_dir.join("extensions")) {
+        for e in entries.flatten() {
+            s.push_str(&format!("- extensions: {}\n", e.file_name().to_string_lossy()));
+        }
+    }
+    s.push('\n');
+
+    s.push_str("## openclaw.json（已脱敏）\n```json\n");
+    match fs::read_to_string(state_dir.join("openclaw.json")) {
+        Ok(raw) => match serde_json::from_str::<serde_json::Value>(&raw) {
+            Ok(mut j) => {
+                redact_secrets(&mut j);
+                s.push_str(&serde_json::to_string_pretty(&j).unwrap_or_default());
+            }
+            Err(_) => s.push_str("(解析失败)"),
+        },
+        Err(_) => s.push_str("(无)"),
+    }
+    s.push_str("\n```\n\n");
+
+    s.push_str("## gateway.log（末尾 60KB）\n```\n");
+    s.push_str(&tail_file(&state_dir.join("logs").join("gateway.log"), 60_000));
+    s.push_str("\n```\n\n");
+    s.push_str("## config-health.json\n```json\n");
+    s.push_str(&tail_file(&state_dir.join("logs").join("config-health.json"), 8_000));
+    s.push_str("\n```\n\n");
+    s.push_str("## config-audit.jsonl（末尾 16KB）\n```\n");
+    s.push_str(&tail_file(&state_dir.join("logs").join("config-audit.jsonl"), 16_000));
+    s.push_str("\n```\n");
+
+    let home = std::env::var("HOME").map_err(|_| "无法定位用户目录".to_string())?;
+    let out_path = std::path::Path::new(&home)
+        .join("Downloads")
+        .join(format!("clawbuddy-diagnostics-{ts}.txt"));
+    fs::write(&out_path, s).map_err(|e| format!("写入失败: {e}"))?;
+    Ok(out_path.to_string_lossy().to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1516,6 +1699,7 @@ pub fn run() {
             check_openclaw_update,
             get_claw_config,
             set_claw_config,
+            export_diagnostics,
             start_wechat_login,
             get_wechat_status,
             send_wechat_message,

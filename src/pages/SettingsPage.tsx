@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import { listAgentFiles, getAgentFile, setAgentFile, type AgentFile } from '../hooks/useChat';
 
 type Provider = 'openai' | 'anthropic';
@@ -93,6 +94,26 @@ export function SettingsPage({ onClearChat }: SettingsPageProps) {
   const [account, setAccount] = useState<StepfunAccount | null>(null);
   const [accountBusy, setAccountBusy] = useState(false);
   const [accountMsg, setAccountMsg] = useState<string | null>(null);
+
+  // 诊断与日志导出
+  const [diagBusy, setDiagBusy] = useState(false);
+  const [diagPath, setDiagPath] = useState<string | null>(null);
+  const [diagMsg, setDiagMsg] = useState<string | null>(null);
+
+  const handleExportDiag = async () => {
+    setDiagBusy(true);
+    setDiagMsg('正在收集日志…');
+    setDiagPath(null);
+    try {
+      const path = await invoke<string>('export_diagnostics');
+      setDiagPath(path);
+      setDiagMsg(null);
+    } catch (error) {
+      setDiagMsg(error instanceof Error ? error.message : '导出失败');
+    } finally {
+      setDiagBusy(false);
+    }
+  };
 
   const loadAccount = async () => {
     setAccountBusy(true);
@@ -316,6 +337,25 @@ export function SettingsPage({ onClearChat }: SettingsPageProps) {
 
   return (
     <div className="settings-page">
+      <section className="settings-section">
+        <h2>诊断与日志</h2>
+        <p className="hint">
+          一键导出运行日志和环境信息（已自动脱敏 API Key / Secret），保存到「下载」文件夹，方便反馈问题时发出来定位现场。
+        </p>
+        <div className="actions">
+          <button type="button" onClick={handleExportDiag} disabled={diagBusy}>
+            {diagBusy ? '导出中…' : '导出诊断日志'}
+          </button>
+          {diagPath && (
+            <button type="button" className="ghost-button" onClick={() => revealItemInDir(diagPath).catch(() => {})}>
+              在访达中显示
+            </button>
+          )}
+        </div>
+        {diagPath && <div className="status">已导出到：{diagPath}</div>}
+        {diagMsg && <div className="status">{diagMsg}</div>}
+      </section>
+
       <section className="settings-section">
         <h2>StepFun API Key（默认模型）</h2>
         <p className="hint">
