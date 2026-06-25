@@ -133,6 +133,72 @@ jobs:
             "{0:N1} MB  {1}" -f ($_.Length/1MB), $_.Name
           }
 
+      - name: Smoke test (gateway + plugins + real chat)
+        shell: pwsh
+        env:
+          STEPFUN_API_KEY: ${{ secrets.STEPFUN_API_KEY }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $root = $PWD.Path
+          $node = "$root/src-tauri/bundled/bin/node.exe"
+          $ocDir = "$root/src-tauri/bundled/lib/node_modules/openclaw"
+          $oc = "$ocDir/openclaw.mjs"
+          $state = "$root/smoke-state"
+          New-Item -ItemType Directory -Force -Path "$state/workspace" | Out-Null
+
+          # 把随包插件放进 state(对标 app 首启动 provision)
+          if (Test-Path src-tauri/bundled/npm/projects) {
+            New-Item -ItemType Directory -Force -Path "$state/npm/projects" | Out-Null
+            Copy-Item -Recurse -Force src-tauri/bundled/npm/projects/* "$state/npm/projects/"
+          }
+          if (Test-Path src-tauri/bundled/extensions/feishu) {
+            New-Item -ItemType Directory -Force -Path "$state/extensions" | Out-Null
+            Copy-Item -Recurse -Force src-tauri/bundled/extensions/feishu "$state/extensions/feishu"
+          }
+          # openclaw 解析联接(对标 fix_bundled_plugin_symlinks)
+          New-Item -ItemType Directory -Force -Path "$state/node_modules" | Out-Null
+          cmd /c mklink /J "$state\node_modules\openclaw" "$ocDir" | Out-Null
+
+          # 写 openclaw.json(对标 provision)
+          $cfg = @{
+            gateway = @{ mode="local"; bind="loopback"; auth=@{ mode="none" }; controlUi=@{ dangerouslyDisableDeviceAuth=$true } }
+            agents  = @{ defaults=@{ workspace="$state/workspace"; skipBootstrap=$true; model="stepfun/step-3.5-flash" }; list=@(@{ id="dev"; default=$true; workspace="$state/workspace"; model="stepfun/step-3.5-flash" }) }
+            models  = @{ providers=@{ stepfun=@{ apiKey=$env:STEPFUN_API_KEY; baseUrl="https://api.stepfun.com/v1" } } }
+            plugins = @{ entries=@{ stepfun=@{ enabled=$true }; "openclaw-weixin"=@{ enabled=$true }; feishu=@{ enabled=$true } } }
+            tools   = @{ web=@{ search=@{ enabled=$true; provider="duckduckgo" } } }
+          }
+          $cfg | ConvertTo-Json -Depth 12 | Set-Content -Encoding utf8 "$state/openclaw.json"
+
+          # 启动网关(后台)
+          $env:OPENCLAW_STATE_DIR = $state
+          $log = "$root/smoke-gw.out.log"
+          $errlog = "$root/smoke-gw.err.log"
+          $p = Start-Process -FilePath $node -ArgumentList @($oc,"gateway","run","--port","18789","--allow-unconfigured","--auth","none","--bind","loopback") -RedirectStandardOutput $log -RedirectStandardError $errlog -PassThru -NoNewWindow
+
+          # 等 health
+          $ok = $false
+          for ($i=0; $i -lt 40; $i++) {
+            try { $r = Invoke-WebRequest -UseBasicParsing -TimeoutSec 4 http://127.0.0.1:18789/health; if ($r.StatusCode -eq 200) { $ok = $true; break } } catch {}
+            Start-Sleep 3
+          }
+          Write-Host "== gateway health ok: $ok =="
+          Write-Host "== loaded plugins line =="
+          (Get-Content $log,$errlog -ErrorAction SilentlyContinue | Select-String "plugins:") | Select-Object -Last 1
+
+          # 真实对话测试
+          $env:OC_DIR = $ocDir
+          $env:GW_URL = "ws://127.0.0.1:18789"
+          & $node scripts/ci-smoke.mjs
+          $code = $LASTEXITCODE
+
+          Write-Host "== gateway out tail =="; Get-Content $log -Tail 30 -ErrorAction SilentlyContinue
+          Write-Host "== gateway err tail =="; Get-Content $errlog -Tail 20 -ErrorAction SilentlyContinue
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+
+          if (-not $ok) { throw "gateway health failed" }
+          if ($code -ne 0) { throw "chat smoke test failed (exit $code)" }
+          Write-Host "SMOKE OK"
+
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
