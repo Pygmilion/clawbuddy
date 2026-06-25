@@ -48,24 +48,28 @@ jobs:
           if (Test-Path src-tauri/bundled/lib/node_modules) { Remove-Item -Recurse -Force src-tauri/bundled/lib/node_modules }
           Copy-Item -Recurse -Force oc/node_modules src-tauri/bundled/lib/node_modules
 
-          Write-Host "== 3) plugins (best-effort; non-fatal) =="
+          Write-Host "== 3) npm 插件: stepfun + 微信 (win32 全新装) =="
           $node = "$PWD/src-tauri/bundled/bin/node.exe"
           $oc = "$PWD/src-tauri/bundled/lib/node_modules/openclaw/openclaw.mjs"
           $env:OPENCLAW_STATE_DIR = "$PWD/ocstate"
-          foreach ($spec in @("@openclaw/stepfun-provider","@tencent-weixin/openclaw-weixin@2.4.3","clawhub:@openclaw/feishu@2026.6.9")) {
+          foreach ($spec in @("@openclaw/stepfun-provider","@tencent-weixin/openclaw-weixin@2.4.3")) {
             Write-Host "-- plugins install $spec"
             & $node $oc plugins install $spec 2>&1 | Write-Host
           }
-          foreach ($id in @("stepfun","openclaw-weixin","feishu")) {
+          foreach ($id in @("stepfun","openclaw-weixin")) {
             & $node $oc plugins enable $id 2>&1 | Write-Host
           }
           if (Test-Path "$env:OPENCLAW_STATE_DIR/npm/projects") {
             New-Item -ItemType Directory -Force -Path src-tauri/bundled/npm/projects | Out-Null
             Copy-Item -Recurse -Force "$env:OPENCLAW_STATE_DIR/npm/projects/*" src-tauri/bundled/npm/projects/
           }
-          if (Test-Path "$env:OPENCLAW_STATE_DIR/extensions/feishu") {
+
+          Write-Host "== 4) 飞书插件: 用 Release 上托管的 2026.6.9 纯 JS 版(绕开 clawhub 版本墙) =="
+          gh release download vendor-feishu-2026.6.9 -p "feishu-2026.6.9.tar.gz" -O feishu.tar.gz
+          if ($LASTEXITCODE -ne 0) { Write-Host "feishu vendor download failed (非致命)" }
+          if (Test-Path feishu.tar.gz) {
             New-Item -ItemType Directory -Force -Path src-tauri/bundled/extensions | Out-Null
-            Copy-Item -Recurse -Force "$env:OPENCLAW_STATE_DIR/extensions/feishu" src-tauri/bundled/extensions/feishu
+            tar -xzf feishu.tar.gz -C src-tauri/bundled/extensions
           }
 
           Write-Host "== strip nested openclaw links inside plugins (avoid NSIS MAX_PATH) =="
@@ -114,6 +118,8 @@ jobs:
           # 插件命令可能返回非零（如 feishu 版本不符）；这里属预期，强制干净退出。
           $global:LASTEXITCODE = 0
           exit 0
+        env:
+          GH_TOKEN: ${{ github.token }}
 
 
       - name: Build Tauri (NSIS exe)
