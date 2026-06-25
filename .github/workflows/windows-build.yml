@@ -30,24 +30,25 @@ jobs:
           $ErrorActionPreference = "Stop"
           $nodeVer = "22.22.3"
 
-          Write-Host "== 1) bundled node.exe =="
+          Write-Host "== 1) bundled node.exe (mandatory) =="
           $url = "https://nodejs.org/dist/v$nodeVer/node-v$nodeVer-win-x64.zip"
           Invoke-WebRequest $url -OutFile node.zip
           Expand-Archive node.zip -DestinationPath nodebin -Force
           New-Item -ItemType Directory -Force -Path src-tauri/bundled/bin | Out-Null
           Copy-Item "nodebin/node-v$nodeVer-win-x64/node.exe" "src-tauri/bundled/bin/node.exe" -Force
 
-          Write-Host "== 2) fresh openclaw@2026.6.9 (win32) =="
+          Write-Host "== 2) fresh openclaw@2026.6.9 win32 (mandatory) =="
           New-Item -ItemType Directory -Force -Path oc | Out-Null
           Push-Location oc
           npm init -y | Out-Null
           npm install openclaw@2026.6.9 --omit=dev --no-audit --no-fund
+          if ($LASTEXITCODE -ne 0) { throw "npm install openclaw failed" }
           Pop-Location
           New-Item -ItemType Directory -Force -Path src-tauri/bundled/lib | Out-Null
           if (Test-Path src-tauri/bundled/lib/node_modules) { Remove-Item -Recurse -Force src-tauri/bundled/lib/node_modules }
           Copy-Item -Recurse -Force oc/node_modules src-tauri/bundled/lib/node_modules
 
-          Write-Host "== 3) plugins (best-effort) =="
+          Write-Host "== 3) plugins (best-effort; non-fatal) =="
           $node = "$PWD/src-tauri/bundled/bin/node.exe"
           $oc = "$PWD/src-tauri/bundled/lib/node_modules/openclaw/openclaw.mjs"
           $env:OPENCLAW_STATE_DIR = "$PWD/ocstate"
@@ -67,8 +68,15 @@ jobs:
             Copy-Item -Recurse -Force "$env:OPENCLAW_STATE_DIR/extensions/feishu" src-tauri/bundled/extensions/feishu
           }
 
+          Write-Host "== verify mandatory =="
+          if (-not (Test-Path src-tauri/bundled/bin/node.exe)) { throw "node.exe missing" }
+          if (-not (Test-Path src-tauri/bundled/lib/node_modules/openclaw/openclaw.mjs)) { throw "openclaw missing" }
           Write-Host "== bundled layout =="
-          Get-ChildItem -Recurse -Depth 2 src-tauri/bundled | Select-Object FullName | Format-Table -AutoSize
+          Get-ChildItem -Recurse -Depth 3 src-tauri/bundled | Select-Object FullName | Format-Table -AutoSize -Wrap
+          # 插件命令可能返回非零（如 feishu 版本不符）；这里属预期，强制干净退出。
+          $global:LASTEXITCODE = 0
+          exit 0
+
 
       - name: Build Tauri (NSIS exe)
         run: npm run tauri build -- --bundles nsis
