@@ -55,6 +55,7 @@ fn write_stepfun_key(key: &str) -> Result<(), String> {
 }
 
 // 杀掉占用网关端口的进程（openclaw 启动器会自我 respawn，按端口杀最可靠）。
+#[cfg(not(windows))]
 fn kill_gateway_on_port() {
     if let Ok(output) = Command::new("lsof")
         .args(["-ti", &format!("tcp:{GATEWAY_PORT}"), "-sTCP:LISTEN"])
@@ -64,6 +65,26 @@ fn kill_gateway_on_port() {
             for pid in text.split_whitespace() {
                 let _ = Command::new("kill").arg("-9").arg(pid).status();
             }
+        }
+    }
+}
+
+#[cfg(windows)]
+fn kill_gateway_on_port() {
+    // netstat -ano 找到监听该端口的 PID，再 taskkill。
+    if let Ok(output) = Command::new("netstat").args(["-ano", "-p", "tcp"]).output() {
+        let text = String::from_utf8_lossy(&output.stdout);
+        let needle = format!(":{GATEWAY_PORT}");
+        let mut pids: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for line in text.lines() {
+            if line.contains("LISTENING") && line.contains(&needle) {
+                if let Some(pid) = line.split_whitespace().last() {
+                    pids.insert(pid.to_string());
+                }
+            }
+        }
+        for pid in pids {
+            let _ = Command::new("taskkill").args(["/F", "/PID", &pid]).status();
         }
     }
 }
@@ -290,6 +311,42 @@ fn bundled_openclaw_pkg_dir() -> Option<std::path::PathBuf> {
     }
 }
 
+// 跨平台：创建指向目录的链接（unix 软链 / windows 目录联接 junction，均无需管理员权限）。
+fn make_dir_link(target: &std::path::Path, link: &std::path::Path) {
+    let _ = fs::remove_file(link);
+    let _ = fs::remove_dir_all(link);
+    #[cfg(not(windows))]
+    {
+        let _ = std::os::unix::fs::symlink(target, link);
+    }
+    #[cfg(windows)]
+    {
+        let _ = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(link)
+            .arg(target)
+            .status();
+    }
+}
+
+// 跨平台：把整个目录树复制到 dst（dst 不存在则创建）。
+fn copy_tree(src: &std::path::Path, dst: &std::path::Path) {
+    #[cfg(not(windows))]
+    {
+        let _ = std::process::Command::new("cp").arg("-R").arg(src).arg(dst).status();
+    }
+    #[cfg(windows)]
+    {
+        let _ = fs::create_dir_all(dst);
+        // robocopy 把 src 内容复制进 dst；返回码 <8 视为成功，这里忽略返回码。
+        let _ = std::process::Command::new("robocopy")
+            .arg(src)
+            .arg(dst)
+            .args(["/E", "/NFL", "/NDL", "/NJH", "/NJS", "/NP"])
+            .status();
+    }
+}
+
 fn fix_dangling_openclaw_symlinks(dir: &std::path::Path, bundled_oc: &std::path::Path) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
@@ -303,8 +360,7 @@ fn fix_dangling_openclaw_symlinks(dir: &std::path::Path, bundled_oc: &std::path:
         if ft.is_symlink() {
             // 仅修复名为 openclaw 且已失效（target 不存在）的软链。
             if entry.file_name() == "openclaw" && !path.exists() {
-                let _ = fs::remove_file(&path);
-                let _ = std::os::unix::fs::symlink(bundled_oc, &path);
+                make_dir_link(bundled_oc, &path);
             }
             // 不进入软链，避免环路。
         } else if ft.is_dir() {
@@ -327,9 +383,7 @@ fn fix_bundled_plugin_symlinks(state_dir: &std::path::Path) {
         Err(_) => true,          // 不存在 → 建
     };
     if needs {
-        let _ = fs::remove_file(&link);
-        let _ = fs::remove_dir_all(&link);
-        let _ = std::os::unix::fs::symlink(&bundled_oc, &link);
+        make_dir_link(&bundled_oc, &link);
     }
     // 顺带把插件内已存在但失效的 openclaw 软链也重新指向。
     fix_dangling_openclaw_symlinks(&state_dir.join("extensions"), &bundled_oc);
@@ -349,13 +403,9 @@ fn copy_bundled_feishu_into_state(state_dir: &std::path::Path) {
     };
     let ext_dir = state_dir.join("extensions");
     let _ = fs::create_dir_all(&ext_dir);
-    // 清理可能的残缺目录，避免 cp -R 把源目录嵌套进去。
+    // 清理可能的残缺目录，避免把源目录嵌套进去。
     let _ = fs::remove_dir_all(&dest);
-    let _ = std::process::Command::new("cp")
-        .arg("-R")
-        .arg(&src)
-        .arg(&dest)
-        .status();
+    copy_tree(&src, &dest);
 }
 
 // 定位随包预置的 npm/projects 目录（StepFun provider 等以 npm 项目形式安装的插件）。
@@ -390,11 +440,7 @@ fn copy_bundled_npm_projects_into_state(state_dir: &std::path::Path) {
         if dest.exists() {
             continue;
         }
-        let _ = std::process::Command::new("cp")
-            .arg("-R")
-            .arg(entry.path())
-            .arg(&dest)
-            .status();
+        copy_tree(&entry.path(), &dest);
     }
 }
 
@@ -1736,10 +1782,11 @@ async fn export_diagnostics() -> Result<String, String> {
     s.push_str(&tail_file(&state_dir.join("logs").join("config-audit.jsonl"), 16_000));
     s.push_str("\n```\n");
 
-    let home = std::env::var("HOME").map_err(|_| "无法定位用户目录".to_string())?;
-    let out_path = std::path::Path::new(&home)
-        .join("Downloads")
-        .join(format!("clawbuddy-diagnostics-{ts}.txt"));
+    let out_dir = dirs::download_dir()
+        .or_else(|| dirs::home_dir().map(|h| h.join("Downloads")))
+        .ok_or_else(|| "无法定位下载目录".to_string())?;
+    let _ = fs::create_dir_all(&out_dir);
+    let out_path = out_dir.join(format!("clawbuddy-diagnostics-{ts}.txt"));
     fs::write(&out_path, s).map_err(|e| format!("写入失败: {e}"))?;
     Ok(out_path.to_string_lossy().to_string())
 }
