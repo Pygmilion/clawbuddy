@@ -68,6 +68,35 @@ jobs:
             Copy-Item -Recurse -Force "$env:OPENCLAW_STATE_DIR/extensions/feishu" src-tauri/bundled/extensions/feishu
           }
 
+          Write-Host "== strip nested openclaw links inside plugins (avoid NSIS MAX_PATH) =="
+          # 插件里 node_modules/openclaw 指回完整 openclaw，会产生超长路径让 NSIS 失败；
+          # 运行时靠 state/node_modules/openclaw 解析，这里安全删掉这些嵌套副本/联接。
+          function Kill-Dir($p) {
+            if (-not (Test-Path $p)) { return }
+            $item = Get-Item $p -Force
+            if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+              cmd /c rmdir "$p" | Out-Null
+            } else {
+              cmd /c rmdir /S /Q "$p" | Out-Null
+            }
+            Write-Host "removed nested openclaw: $p"
+          }
+          function Strip-NestedOpenclaw($nm) {
+            if (-not (Test-Path $nm)) { return }
+            Kill-Dir (Join-Path $nm "openclaw")
+            Get-ChildItem $nm -Directory -Filter "@*" -ErrorAction SilentlyContinue | ForEach-Object {
+              Get-ChildItem $_.FullName -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+                Kill-Dir (Join-Path $_.FullName "node_modules/openclaw")
+              }
+            }
+          }
+          if (Test-Path src-tauri/bundled/npm/projects) {
+            Get-ChildItem src-tauri/bundled/npm/projects -Directory | ForEach-Object {
+              Strip-NestedOpenclaw (Join-Path $_.FullName "node_modules")
+            }
+          }
+          Strip-NestedOpenclaw "src-tauri/bundled/extensions/feishu/node_modules"
+
           Write-Host "== verify mandatory =="
           if (-not (Test-Path src-tauri/bundled/bin/node.exe)) { throw "node.exe missing" }
           if (-not (Test-Path src-tauri/bundled/lib/node_modules/openclaw/openclaw.mjs)) { throw "openclaw missing" }
