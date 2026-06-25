@@ -52,7 +52,7 @@ jobs:
           $node = "$PWD/src-tauri/bundled/bin/node.exe"
           $oc = "$PWD/src-tauri/bundled/lib/node_modules/openclaw/openclaw.mjs"
           $env:OPENCLAW_STATE_DIR = "$PWD/ocstate"
-          foreach ($spec in @("@openclaw/stepfun-provider","@tencent-weixin/openclaw-weixin@2.4.3","clawhub:@openclaw/feishu")) {
+          foreach ($spec in @("@openclaw/stepfun-provider","@tencent-weixin/openclaw-weixin@2.4.3","clawhub:@openclaw/feishu@2026.6.9")) {
             Write-Host "-- plugins install $spec"
             & $node $oc plugins install $spec 2>&1 | Write-Host
           }
@@ -100,8 +100,17 @@ jobs:
           Write-Host "== verify mandatory =="
           if (-not (Test-Path src-tauri/bundled/bin/node.exe)) { throw "node.exe missing" }
           if (-not (Test-Path src-tauri/bundled/lib/node_modules/openclaw/openclaw.mjs)) { throw "openclaw missing" }
-          Write-Host "== bundled layout =="
-          Get-ChildItem -Recurse -Depth 3 src-tauri/bundled | Select-Object FullName | Format-Table -AutoSize -Wrap
+
+          Write-Host "== bundled sizes =="
+          function DirMB($p) { if (Test-Path $p) { [math]::Round(((Get-ChildItem -LiteralPath $p -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum/1MB),1) } else { 0 } }
+          $ocMB = DirMB "src-tauri/bundled/lib/node_modules/openclaw"
+          Write-Host ("bundled total : {0} MB" -f (DirMB "src-tauri/bundled"))
+          Write-Host ("  bin/node.exe: {0} MB" -f (DirMB "src-tauri/bundled/bin"))
+          Write-Host ("  openclaw    : {0} MB" -f $ocMB)
+          Write-Host ("  npm/projects: {0} MB" -f (DirMB "src-tauri/bundled/npm/projects"))
+          Write-Host ("  extensions  : {0} MB" -f (DirMB "src-tauri/bundled/extensions"))
+          if ($ocMB -lt 100) { throw "bundled openclaw too small ($ocMB MB) — runtime not fully packaged" }
+
           # 插件命令可能返回非零（如 feishu 版本不符）；这里属预期，强制干净退出。
           $global:LASTEXITCODE = 0
           exit 0
@@ -109,6 +118,14 @@ jobs:
 
       - name: Build Tauri (NSIS exe)
         run: npm run tauri build -- --bundles nsis
+
+      - name: Report installer size
+        if: always()
+        shell: pwsh
+        run: |
+          Get-ChildItem src-tauri/target/release/bundle/nsis/*.exe -ErrorAction SilentlyContinue | ForEach-Object {
+            "{0:N1} MB  {1}" -f ($_.Length/1MB), $_.Name
+          }
 
       - name: Upload installer
         uses: actions/upload-artifact@v4
