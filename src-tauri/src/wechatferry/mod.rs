@@ -73,7 +73,7 @@ impl Default for WeChatFerryRuntime {
                 .join("ClawBuddy")
                 .join("wechatferry"),
             executable_path: default_wechatferry_executable_path(),
-            gateway_url: "http://127.0.0.1:18789".to_string(),
+            gateway_url: "http://127.0.0.1:18930".to_string(),
             gateway_secret: None,
             log_dir: PathBuf::from("."),
             qr_mode: true,

@@ -17,9 +17,9 @@ const TENANT_ACCESS_TOKEN_URL: &str =
     "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal";
 const SEND_MESSAGE_URL: &str = "https://open.feishu.cn/open-apis/im/v1/messages";
 const GATEWAY_HOST: &str = "127.0.0.1";
-const GATEWAY_PORT: u16 = 18789;
+const GATEWAY_PORT: u16 = 18930;
 const GATEWAY_MESSAGE_ROUTE_URL: &str =
-    "http://127.0.0.1:18789/api/v1/message/route";
+    "http://127.0.0.1:18930/api/v1/message/route";
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct TenantAccessTokenRequest {

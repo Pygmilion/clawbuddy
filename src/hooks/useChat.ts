@@ -12,7 +12,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 
-const GATEWAY_WS_URL = 'ws://127.0.0.1:18789';
+const GATEWAY_WS_URL = 'ws://127.0.0.1:18930';
 
 const PROTOCOL_VERSION = 4;
 const REQUEST_SCOPES = ['operator.admin', 'operator.write', 'operator.read'];

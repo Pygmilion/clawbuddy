@@ -173,12 +173,12 @@ jobs:
           $env:OPENCLAW_STATE_DIR = $state
           $log = "$root/smoke-gw.out.log"
           $errlog = "$root/smoke-gw.err.log"
-          $p = Start-Process -FilePath $node -ArgumentList @($oc,"gateway","run","--port","18789","--allow-unconfigured","--auth","none","--bind","loopback") -RedirectStandardOutput $log -RedirectStandardError $errlog -PassThru -NoNewWindow
+          $p = Start-Process -FilePath $node -ArgumentList @($oc,"gateway","run","--port","18930","--allow-unconfigured","--auth","none","--bind","loopback") -RedirectStandardOutput $log -RedirectStandardError $errlog -PassThru -NoNewWindow
 
           # 等 health
           $ok = $false
           for ($i=0; $i -lt 40; $i++) {
-            try { $r = Invoke-WebRequest -UseBasicParsing -TimeoutSec 4 http://127.0.0.1:18789/health; if ($r.StatusCode -eq 200) { $ok = $true; break } } catch {}
+            try { $r = Invoke-WebRequest -UseBasicParsing -TimeoutSec 4 http://127.0.0.1:18930/health; if ($r.StatusCode -eq 200) { $ok = $true; break } } catch {}
             Start-Sleep 3
           }
           Write-Host "== gateway health ok: $ok =="
@@ -187,7 +187,7 @@ jobs:
 
           # 真实对话测试
           $env:OC_DIR = $ocDir
-          $env:GW_URL = "ws://127.0.0.1:18789"
+          $env:GW_URL = "ws://127.0.0.1:18930"
           & $node scripts/ci-smoke.mjs
           $code = $LASTEXITCODE
 

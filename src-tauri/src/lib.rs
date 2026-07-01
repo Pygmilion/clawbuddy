@@ -14,10 +14,11 @@ use wechatferry::{WeChatFerryManager, WeChatFerryStatus};
 mod feishu;
 use feishu::SharedFeishuState;
 
-// ClawBuddy 运行自带的独立 gateway：使用专用端口与独立状态目录，避免与用户自己的
-// openclaw CLI / launchd 服务（默认 18789）冲突，也不会改动用户真实的 ~/.openclaw 配置。
-const GATEWAY_PORT: u16 = 18789;
-const GATEWAY_ADDR: &str = "127.0.0.1:18789";
+// ClawBuddy 运行自带的独立 gateway：使用【专用端口 18930】与独立状态目录,
+// 刻意避开 openclaw 默认端口 18789 —— 否则会和用户机器上其它基于 openclaw 的应用
+// (如 AceClaw)争抢 18789 导致 EADDRINUSE 启动失败;也不会改动用户真实的 ~/.openclaw。
+const GATEWAY_PORT: u16 = 18930;
+const GATEWAY_ADDR: &str = "127.0.0.1:18930";
 
 // ClawBuddy 当前默认使用 StepFun（阶跃星辰）作为模型后端。
 const STEPFUN_MODEL_REF: &str = "stepfun/step-3.5-flash";
