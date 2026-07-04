@@ -37,11 +37,11 @@ jobs:
           New-Item -ItemType Directory -Force -Path src-tauri/bundled/bin | Out-Null
           Copy-Item "nodebin/node-v$nodeVer-win-x64/node.exe" "src-tauri/bundled/bin/node.exe" -Force
 
-          Write-Host "== 2) fresh openclaw@2026.6.9 win32 (mandatory) =="
+          Write-Host "== 2) fresh openclaw@2026.6.11 win32 (mandatory) =="
           New-Item -ItemType Directory -Force -Path oc | Out-Null
           Push-Location oc
           npm init -y | Out-Null
-          npm install openclaw@2026.6.9 --omit=dev --no-audit --no-fund
+          npm install openclaw@2026.6.11 --omit=dev --no-audit --no-fund
           if ($LASTEXITCODE -ne 0) { throw "npm install openclaw failed" }
           Pop-Location
           New-Item -ItemType Directory -Force -Path src-tauri/bundled/lib | Out-Null

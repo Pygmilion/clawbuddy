@@ -663,6 +663,15 @@ fn ensure_stepfun_provider(state_dir: &std::path::Path) {
 }
 
 fn start_gateway_process() -> Result<(), String> {
+    // 硬护栏：若端口已被监听（网关已在跑，或启动竞态中另一次已拉起），直接返回，
+    // 绝不再 spawn 第二个，避免 EADDRINUSE 把网关搞挂。
+    if let Ok(addr) = GATEWAY_ADDR.parse::<std::net::SocketAddr>() {
+        if std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(400)).is_ok() {
+            println!("[gateway] port {GATEWAY_ADDR} already listening; skip spawning a second instance");
+            return Ok(());
+        }
+    }
+
     let node = get_node_path()?;
     let script = bundled_script_path();
 
@@ -808,6 +817,7 @@ async fn is_listening(address: &str) -> bool {
 
 async fn check_gateway_ready_internal() -> bool {
     let client = match reqwest::Client::builder()
+        .no_proxy()
         .timeout(Duration::from_secs(2))
         .build()
     {
@@ -1733,6 +1743,7 @@ async fn export_diagnostics() -> Result<String, String> {
     // 网关健康
     let url = format!("http://127.0.0.1:{GATEWAY_PORT}/health");
     let health = match reqwest::Client::builder()
+        .no_proxy()
         .timeout(std::time::Duration::from_secs(4))
         .build()
     {
