@@ -816,35 +816,45 @@ async fn is_listening(address: &str) -> bool {
 }
 
 async fn check_gateway_ready_internal() -> bool {
-    let client = match reqwest::Client::builder()
+    // 首选 HTTP /health;但在个别 Windows 上 reqwest 连本地回环会莫名失败
+    // (node/PowerShell 却正常)。因此 reqwest 失败时回退到 TCP 连接探测——
+    // 端口能连上即视为就绪,避免因 reqwest 本地怪癖导致"网关永远未就绪"。
+    if let Ok(client) = reqwest::Client::builder()
         .no_proxy()
         .timeout(Duration::from_secs(2))
         .build()
     {
-        Ok(client) => client,
-        Err(error) => {
-            eprintln!("[gateway] reqwest client build failed: {error}");
-            return false;
+        match client
+            .get(format!("http://{GATEWAY_ADDR}/health"))
+            .timeout(Duration::from_secs(2))
+            .send()
+            .await
+        {
+            Ok(response) => {
+                if response.status().is_success() {
+                    return true;
+                }
+            }
+            Err(error) => {
+                eprintln!("[gateway] health(http) failed, falling back to tcp probe: {error}");
+            }
         }
-    };
+    }
 
-    let result = match client
-        .get(format!("http://{GATEWAY_ADDR}/health"))
-        .timeout(Duration::from_secs(2))
-        .send()
+    // 回退:TCP 连接探测(node/PS 已证实本机回环可达)。
+    if let Ok(addr) = GATEWAY_ADDR.parse::<std::net::SocketAddr>() {
+        match tokio::time::timeout(
+            Duration::from_secs(2),
+            tokio::net::TcpStream::connect(addr),
+        )
         .await
-    {
-        Ok(response) => {
-            eprintln!("[gateway] health status {}", response.status());
-            response.status().is_success()
+        {
+            Ok(Ok(_)) => return true,
+            Ok(Err(e)) => eprintln!("[gateway] tcp probe failed: {e}"),
+            Err(_) => eprintln!("[gateway] tcp probe timeout"),
         }
-        Err(error) => {
-            eprintln!("[gateway] health request failed: {error}");
-            false
-        }
-    };
-
-    result
+    }
+    false
 }
 
 #[tauri::command]
