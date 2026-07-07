@@ -136,8 +136,10 @@ export function SettingsPage({ onClearChat }: SettingsPageProps) {
   const [cpMsg, setCpMsg] = useState<string | null>(null);
 
   const STEPFUN_MODELS = [
-    { id: 'step-3.5-flash', label: 'Step 3.5 Flash（文本）' },
-    { id: 'step-3.7-flash', label: 'Step 3.7（多模态）' },
+    { id: 'step-2-16k', label: 'Step 2 (16k) · 推荐（文本，稳定）' },
+    { id: 'step-1-8k', label: 'Step 1 (8k)（文本）' },
+    { id: 'step-3.5-flash', label: 'Step 3.5 Flash（reasoning，可能吞字）' },
+    { id: 'step-3.7-flash', label: 'Step 3.7 多模态（reasoning，可能吞字）' },
   ];
   const handleSwitchStepfunModel = async (model: string) => {
     setCpBusy(true);
@@ -271,7 +273,7 @@ export function SettingsPage({ onClearChat }: SettingsPageProps) {
     setStepfunMsg('正在保存并重启网关…');
     try {
       await invoke('set_stepfun_key', { key });
-      await invoke('set_active_model', { modelRef: 'stepfun/step-3.5-flash' }).catch(() => {});
+      await invoke('set_active_model', { modelRef: 'stepfun/step-2-16k' }).catch(() => {});
       setStepfunConfigured(true);
       setStepfunKey('');
       setStepfunMsg('已保存，网关已重启。');
@@ -312,7 +314,7 @@ export function SettingsPage({ onClearChat }: SettingsPageProps) {
     setCpBusy(true);
     setCpMsg('正在切回 StepFun…');
     try {
-      await invoke('set_active_model', { modelRef: 'stepfun/step-3.5-flash' });
+      await invoke('set_active_model', { modelRef: 'stepfun/step-2-16k' });
       setCpMsg('已切回 StepFun 默认模型');
       refreshModelConfig();
     } catch (error) {
@@ -359,7 +361,7 @@ export function SettingsPage({ onClearChat }: SettingsPageProps) {
       <section className="settings-section">
         <h2>StepFun API Key（默认模型）</h2>
         <p className="hint">
-          当前状态：{stepfunConfigured ? '✅ 已配置' : '❌ 未配置'}。填入阶跃星辰 API Key 即可，保存后自动重启网关并使用 stepfun/step-3.5-flash。
+          当前状态：{stepfunConfigured ? '✅ 已配置' : '❌ 未配置'}。填入阶跃星辰 API Key 即可，保存后自动重启网关并使用 stepfun/step-2-16k。
         </p>
         <label className="field">
           <span>StepFun Key</span>
@@ -376,7 +378,7 @@ export function SettingsPage({ onClearChat }: SettingsPageProps) {
         <label className="field">
           <span>StepFun 模型</span>
           <select
-            value={activeModel.startsWith('stepfun/') ? activeModel.slice('stepfun/'.length) : 'step-3.5-flash'}
+            value={activeModel.startsWith('stepfun/') ? activeModel.slice('stepfun/'.length) : 'step-2-16k'}
             onChange={(e) => handleSwitchStepfunModel(e.currentTarget.value)}
             disabled={cpBusy}
           >

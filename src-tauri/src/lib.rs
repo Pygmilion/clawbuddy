@@ -21,7 +21,7 @@ const GATEWAY_PORT: u16 = 18930;
 const GATEWAY_ADDR: &str = "127.0.0.1:18930";
 
 // ClawBuddy 当前默认使用 StepFun（阶跃星辰）作为模型后端。
-const STEPFUN_MODEL_REF: &str = "stepfun/step-3.5-flash";
+const STEPFUN_MODEL_REF: &str = "stepfun/step-2-16k";
 // 默认走国内站（与国内 StepFun key 匹配）；openclaw 内置默认是国际站 api.stepfun.ai，
 // 国内 key 打国际站会返回 401。
 const STEPFUN_BASE_URL: &str = "https://api.stepfun.com/v1";
@@ -1043,10 +1043,13 @@ fn get_model_config() -> Result<serde_json::Value, String> {
         .unwrap_or_default();
     let providers: Vec<String> = providers_obj.keys().cloned().collect();
 
-    // 可一键切换的模型列表：StepFun 两个固定模型 + 其它自定义 provider 的模型。
+    // 可一键切换的模型列表。step-2-16k 为默认(纯文本、不带 reasoning,流式稳定);
+    // 3.5/3.7 是 reasoning 模型,当前 openclaw 流式对 reasoning 有 bug(中文回复可能吞字),暂标注。
     let mut models: Vec<serde_json::Value> = vec![
-        serde_json::json!({ "ref": "stepfun/step-3.5-flash", "label": "StepFun 3.5 Flash" }),
-        serde_json::json!({ "ref": "stepfun/step-3.7-flash", "label": "StepFun 3.7（多模态）" }),
+        serde_json::json!({ "ref": "stepfun/step-2-16k", "label": "StepFun 2 (16k) · 推荐" }),
+        serde_json::json!({ "ref": "stepfun/step-1-8k", "label": "StepFun 1 (8k)" }),
+        serde_json::json!({ "ref": "stepfun/step-3.5-flash", "label": "StepFun 3.5 Flash（reasoning，可能吞字）" }),
+        serde_json::json!({ "ref": "stepfun/step-3.7-flash", "label": "StepFun 3.7 多模态（reasoning，可能吞字）" }),
     ];
     for (id, prov) in &providers_obj {
         if id == "stepfun" {
