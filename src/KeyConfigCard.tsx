@@ -23,7 +23,7 @@ export function KeyConfigCard({
     setMsg('正在保存并启动网关…');
     try {
       await invoke('set_stepfun_key', { key: k });
-      await invoke('set_active_model', { modelRef: 'stepfun/step-2-16k' }).catch(() => {});
+      await invoke('set_active_model', { modelRef: 'stepfun/step-1-32k' }).catch(() => {});
       setMsg(null);
       onConfigured();
     } catch (error) {
