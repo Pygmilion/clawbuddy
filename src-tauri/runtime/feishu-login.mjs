@@ -11,6 +11,8 @@
 const SENTINEL = '@@CLAWFS@@ ';
 const emit = (obj) => process.stdout.write(SENTINEL + JSON.stringify(obj) + '\n');
 
+import { pathToFileURL } from 'node:url';
+
 const modulePath = process.argv[2];
 if (!modulePath) {
   emit({ type: 'error', message: '缺少 app-registration 模块路径参数' });
@@ -18,7 +20,8 @@ if (!modulePath) {
 }
 
 try {
-  const mod = await import(modulePath);
+  // Windows 的 ESM 加载器不接受裸绝对路径（C:\...），必须转成 file:// URL。
+  const mod = await import(pathToFileURL(modulePath).href);
   const begin = await mod.beginAppRegistration('feishu');
   if (!begin?.qrUrl) {
     emit({ type: 'error', message: '未获取到飞书二维码' });

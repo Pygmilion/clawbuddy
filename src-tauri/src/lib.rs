@@ -21,7 +21,7 @@ const GATEWAY_PORT: u16 = 18930;
 const GATEWAY_ADDR: &str = "127.0.0.1:18930";
 
 // ClawBuddy 当前默认使用 StepFun（阶跃星辰）作为模型后端。
-const STEPFUN_MODEL_REF: &str = "stepfun/step-1-32k";
+const STEPFUN_MODEL_REF: &str = "stepfun/step-3.5-flash";
 // 默认走国内站（与国内 StepFun key 匹配）；openclaw 内置默认是国际站 api.stepfun.ai，
 // 国内 key 打国际站会返回 401。
 const STEPFUN_BASE_URL: &str = "https://api.stepfun.com/v1";
@@ -662,6 +662,43 @@ fn ensure_stepfun_provider(state_dir: &std::path::Path) {
         .status();
 }
 
+// openclaw 的 Control-UI origin 校验只把 hostname=localhost 当回环放行。
+// Windows 的 Tauri WebView2 origin 是 http://tauri.localhost（hostname=tauri.localhost，非回环），
+// 会被拒绝（1008 origin not allowed），网关连不上——这正是 Windows 版「卡住/无反馈」的根因。
+// （Mac 的 tauri://localhost 因 hostname=localhost 命中回环规则才没事。）
+// 往配置 allowedOrigins 写在 loopback bind 下会被 openclaw 启动时清掉，留不住；
+// 故直接给打包的 openclaw dist JS 打补丁：本地客户端 + tauri.localhost origin 直接放行。
+// 幂等 + 每次启动自愈，全新安装后 dist 文件名 hash 变了也能靠 anchor 重新定位。
+fn patch_openclaw_origin_check(script_path: &std::path::Path) {
+    let Some(dist_dir) = script_path.parent().map(|p| p.join("dist")) else {
+        return;
+    };
+    let Ok(entries) = fs::read_dir(&dist_dir) else {
+        return;
+    };
+    const ANCHOR: &str = "const requestHost = normalizeHostHeader(params.requestHost);";
+    const MARKER: &str = "matchedBy: \"tauri-local\"";
+    let inject = format!(
+        "if (params.isLocalClient !== false && (parsedOrigin.hostname === \"tauri.localhost\" || parsedOrigin.hostname.endsWith(\".tauri.localhost\"))) return {{ ok: true, {MARKER} }};\n\t{ANCHOR}"
+    );
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("js") {
+            continue;
+        }
+        let Ok(contents) = fs::read_to_string(&path) else {
+            continue;
+        };
+        if contents.contains(MARKER) || !contents.contains(ANCHOR) {
+            continue;
+        }
+        let patched = contents.replacen(ANCHOR, &inject, 1);
+        if fs::write(&path, patched).is_ok() {
+            println!("[gateway] patched openclaw origin check for tauri.localhost: {}", path.display());
+        }
+    }
+}
+
 fn start_gateway_process() -> Result<(), String> {
     // 硬护栏：若端口已被监听（网关已在跑，或启动竞态中另一次已拉起），直接返回，
     // 绝不再 spawn 第二个，避免 EADDRINUSE 把网关搞挂。
@@ -674,6 +711,7 @@ fn start_gateway_process() -> Result<(), String> {
 
     let node = get_node_path()?;
     let script = bundled_script_path();
+    patch_openclaw_origin_check(&script);
 
     let state_dir = gateway_state_dir();
     fs::create_dir_all(&state_dir).map_err(|e| format!("无法创建状态目录: {e}"))?;
@@ -1043,13 +1081,13 @@ fn get_model_config() -> Result<serde_json::Value, String> {
         .unwrap_or_default();
     let providers: Vec<String> = providers_obj.keys().cloned().collect();
 
-    // 可一键切换的模型列表。step-1-32k 为默认(纯文本、不带 reasoning,流式稳定);
-    // 3.5/3.7 是 reasoning 模型,当前 openclaw 流式对 reasoning 有 bug(中文回复可能吞字),暂标注。
+    // 可一键切换的模型列表。step-3.5-flash 为默认(reasoning，中文流式已验证正常)；
+    // step-1-32k 保留为纯文本稳定备选。
     let mut models: Vec<serde_json::Value> = vec![
-        serde_json::json!({ "ref": "stepfun/step-1-32k", "label": "StepFun 1 (32k) · 推荐" }),
-        serde_json::json!({ "ref": "stepfun/step-1-8k", "label": "StepFun 1 (8k)" }),
-        serde_json::json!({ "ref": "stepfun/step-3.5-flash", "label": "StepFun 3.5 Flash（reasoning，可能吞字）" }),
-        serde_json::json!({ "ref": "stepfun/step-3.7-flash", "label": "StepFun 3.7 多模态（reasoning，可能吞字）" }),
+        serde_json::json!({ "ref": "stepfun/step-3.5-flash", "label": "StepFun 3.5 Flash · 推荐" }),
+        serde_json::json!({ "ref": "stepfun/step-3.7-flash", "label": "StepFun 3.7 多模态" }),
+        serde_json::json!({ "ref": "stepfun/step-1-32k", "label": "StepFun 1 (32k)（纯文本）" }),
+        serde_json::json!({ "ref": "stepfun/step-1-8k", "label": "StepFun 1 (8k)（纯文本）" }),
     ];
     for (id, prov) in &providers_obj {
         if id == "stepfun" {
@@ -1447,6 +1485,9 @@ async fn feishu_login_start(app: AppHandle, manager: State<'_, GatewayManager>) 
         emit(serde_json::json!({ "type": "preparing", "message": "正在准备飞书插件…" }));
 
         let state_dir = gateway_state_dir();
+        // 确保 state/node_modules/openclaw 软链有效：插件 dist 里 import 'openclaw' 靠它解析，
+        // 失效（如重装后 junction 悬空）会让 helper 报 "Cannot find package 'openclaw'"。
+        fix_bundled_plugin_symlinks(&state_dir);
         let qr_module = match ensure_feishu_plugin(&state_dir) {
             Ok(path) => path,
             Err(error) => {
