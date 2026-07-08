@@ -700,11 +700,29 @@ fn patch_openclaw_origin_check(script_path: &std::path::Path) {
 }
 
 fn start_gateway_process() -> Result<(), String> {
-    // 硬护栏：若端口已被监听（网关已在跑，或启动竞态中另一次已拉起），直接返回，
-    // 绝不再 spawn 第二个，避免 EADDRINUSE 把网关搞挂。
-    if let Ok(addr) = GATEWAY_ADDR.parse::<std::net::SocketAddr>() {
+    // 进程级 spawn 串行化 + 竞态护栏。之前只用「端口是否在监听」判断，但网关从 spawn 到
+    // 真正 bind 端口有数秒窗口，期间第二次 start 会看不到监听而重复拉起 → 两个实例抢 18930，
+    // 落败的那个打印 "gateway startup failed" 并触发 shutdown，把启动搅乱（表现为一直连不上）。
+    // 用一把静态锁把整个 spawn 串行化；并记录上次 spawn 时刻，短时间内已拉起过就直接跳过。
+    use std::sync::Mutex;
+    static SPAWN_GUARD: Mutex<Option<Instant>> = Mutex::new(None);
+    let mut last_spawn = SPAWN_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+
+    let addr = GATEWAY_ADDR.parse::<std::net::SocketAddr>().ok();
+    // 已在监听（网关已在跑，或另一次已拉起并 bind）→ 直接复用，绝不 spawn 第二个。
+    if let Some(addr) = addr {
         if std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(400)).is_ok() {
             println!("[gateway] port {GATEWAY_ADDR} already listening; skip spawning a second instance");
+            return Ok(());
+        }
+    }
+    // 刚拉起过但还没 bind 完（仍在启动窗口内）→ 别再拉第二个，杜绝双启动 EADDRINUSE 竞态。
+    if let Some(t) = *last_spawn {
+        if t.elapsed() < Duration::from_secs(30) {
+            println!(
+                "[gateway] a gateway spawn is in flight ({}s ago); skip second instance",
+                t.elapsed().as_secs()
+            );
             return Ok(());
         }
     }
@@ -808,6 +826,8 @@ fn start_gateway_process() -> Result<(), String> {
         }
     });
 
+    // 记录本次 spawn 时刻：短时间内的重复 start 会在上面的护栏处直接跳过。
+    *last_spawn = Some(Instant::now());
     Ok(())
 }
 
