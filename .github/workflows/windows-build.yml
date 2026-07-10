@@ -2,7 +2,7 @@ name: Windows Build
 
 on:
   push:
-    branches: [windows-port]
+    branches: [main, windows-port]
   workflow_dispatch:
 
 jobs:
