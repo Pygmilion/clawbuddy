@@ -47,9 +47,32 @@ export class ErrorBoundary extends React.Component<{ children: React.ReactNode }
   }
 }
 
-// 状态圆点（绿=正常，红=未连接，琥珀=检测中）。
-function Dot({ tone }: { tone: Tone }) {
+// 状态圆点（绿=正常，红=未连接，琥珀=检测中）。loading=true 时显示环形加载指示灯。
+function Dot({ tone, loading }: { tone: Tone; loading?: boolean }) {
+  if (loading) {
+    return <span className="status-ring" aria-label="加载中" title="正在加载…" />;
+  }
   return <span className={`status-dot ${tone}`} />;
+}
+
+const WORKING_PHRASES = ['正在思考', '正在查资料', '正在动手', '正在整理'];
+
+// Claw 工作中指示器：流式回复期间显示，让"不断尝试"的过程可见。
+function WorkingIndicator({ compact }: { compact?: boolean }) {
+  const [phase, setPhase] = useState(0);
+  useEffect(() => {
+    const t = window.setInterval(() => setPhase((p) => (p + 1) % WORKING_PHRASES.length), 2600);
+    return () => window.clearInterval(t);
+  }, []);
+  return (
+    <div className={`working-indicator ${compact ? 'compact' : ''}`}>
+      <span className="work-spinner" aria-hidden />
+      <span className="work-text">
+        Claw {WORKING_PHRASES[phase]}
+        <span className="work-dots"><i>.</i><i>.</i><i>.</i></span>
+      </span>
+    </div>
+  );
 }
 
 const BOOT_MESSAGES = ['正在唤醒 Claw…', '启动本地网关…', '预热模型与插件…', '马上就好…'];
@@ -201,14 +224,21 @@ function App() {
   useEffect(() => {
     let active = true;
     const poll = async () => {
-      const [ready, wechat, feishu] = await Promise.all([
-        invoke<boolean>('check_gateway_ready').catch(() => false),
+      const ready = await invoke<boolean>('check_gateway_ready').catch(() => false);
+      if (!active) return;
+      setGatewayReady(ready);
+      setGatewayChecking(false);
+      if (!ready) {
+        // 网关还在启动，渠道视为「加载中」（保持 null → 侧边栏显示环形指示灯）。
+        setWeChatRunning(null);
+        setFeishuRunning(null);
+        return;
+      }
+      const [wechat, feishu] = await Promise.all([
         getChannelRunning('openclaw-weixin'),
         getChannelRunning('feishu'),
       ]);
       if (active) {
-        setGatewayReady(ready);
-        setGatewayChecking(false);
         setWeChatRunning(wechat);
         setFeishuRunning(feishu);
       }
@@ -355,11 +385,11 @@ function App() {
           </button>
           <button type="button" className={activeView === 'feishu' ? 'active' : ''} onClick={() => setActiveView('feishu')}>
             <span>飞书绑定</span>
-            <Dot tone={feishuTone} />
+            <Dot tone={feishuTone} loading={feishuRunning === null} />
           </button>
           <button type="button" className={activeView === 'wechat' ? 'active' : ''} onClick={() => setActiveView('wechat')}>
             <span>微信绑定</span>
-            <Dot tone={weChatTone} />
+            <Dot tone={weChatTone} loading={weChatRunning === null} />
           </button>
           <button type="button" onClick={() => openUrl(SKILL_PLAZA_URL).catch(() => {})}>
             <span>技能广场 ↗</span>
@@ -450,6 +480,7 @@ function App() {
                 )}
                 {messages.map((message, index) => {
                   const isUser = message.role === 'user';
+                  const isStreaming = loading && !isUser && index === messages.length - 1;
                   return (
                     <div key={index} className={`message ${message.role}`}>
                       {!isUser && <div className="message-avatar">🦞</div>}
@@ -468,8 +499,9 @@ function App() {
                               <Markdown>{message.content}</Markdown>
                             )
                           ) : (
-                            <span className="typing">…</span>
+                            isStreaming ? <WorkingIndicator /> : <span className="typing">…</span>
                           )}
+                          {isStreaming && message.content && <WorkingIndicator compact />}
                         </div>
                       </div>
                     </div>
