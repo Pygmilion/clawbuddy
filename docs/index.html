@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ClawBuddy · 下载</title>
+  <meta name="description" content="ClawBuddy —— 你的本地 AI 伙伴，微信 / 飞书一处对话。" />
+  <style>
+    :root {
+      --blue: #38bdf8;
+      --blue-deep: #0ea5e9;
+      --ink: #0f172a;
+      --muted: #64748b;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      color: var(--ink);
+      background: radial-gradient(1200px 600px at 50% -10%, #e0f2fe 0%, #f8fafc 45%, #f8fafc 100%);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 40px 20px;
+      text-align: center;
+    }
+    .icon { width: 120px; height: 120px; margin-bottom: 18px; filter: drop-shadow(0 8px 24px rgba(56,189,248,0.35)); }
+    h1 { font-size: 40px; letter-spacing: 0.5px; margin-bottom: 8px; }
+    .tagline { font-size: 17px; color: var(--muted); margin-bottom: 6px; }
+    .sub { font-size: 14px; color: var(--muted); margin-bottom: 32px; }
+    .download {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 15px 34px;
+      background: linear-gradient(180deg, var(--blue) 0%, var(--blue-deep) 100%);
+      color: #fff;
+      font-size: 17px;
+      font-weight: 600;
+      border-radius: 14px;
+      text-decoration: none;
+      box-shadow: 0 10px 30px rgba(14,165,233,0.4);
+      transition: transform 0.15s ease, box-shadow 0.15s ease;
+    }
+    .download:hover { transform: translateY(-2px); box-shadow: 0 14px 36px rgba(14,165,233,0.5); }
+    .meta { margin-top: 14px; font-size: 13px; color: var(--muted); }
+    .steps {
+      margin-top: 44px;
+      max-width: 520px;
+      text-align: left;
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 16px;
+      padding: 24px 28px;
+      box-shadow: 0 4px 20px rgba(15,23,42,0.05);
+    }
+    .steps h2 { font-size: 15px; margin-bottom: 14px; color: var(--ink); }
+    .steps ol { margin-left: 18px; color: #334155; font-size: 14px; line-height: 1.9; }
+    .foot { margin-top: 36px; font-size: 12.5px; color: #94a3b8; }
+    .foot a { color: var(--blue-deep); text-decoration: none; }
+  </style>
+</head>
+<body>
+  <img class="icon" src="icon.png" alt="ClawBuddy" />
+  <h1>ClawBuddy</h1>
+  <p class="tagline">你的本地 AI 伙伴</p>
+  <p class="sub">微信 / 飞书一处对话 · 数据留在自己电脑</p>
+
+  <a class="download" href="https://github.com/Pygmilion/clawbuddy/releases/latest/download/ClawBuddy_x64-setup.exe">
+    ⬇ 下载 Windows 版
+  </a>
+  <div class="meta">Windows 10 / 11 (64 位) · 安装包约 58 MB</div>
+
+  <div class="steps">
+    <h2>安装说明</h2>
+    <ol>
+      <li>点击上方按钮下载安装包（<code>ClawBuddy_x64-setup.exe</code>）。</li>
+      <li>双击运行；若系统提示「Windows 已保护你的电脑」，点「更多信息 → 仍要运行」。</li>
+      <li>安装完成后从开始菜单打开 ClawBuddy，首次启动需等待十几秒预热模型。</li>
+      <li>在设置里填入 StepFun API Key 即可开始对话。</li>
+    </ol>
+  </div>
+
+  <div class="foot">
+    开源项目 · <a href="https://github.com/Pygmilion/clawbuddy">GitHub</a>
+  </div>
+</body>
+</html>
