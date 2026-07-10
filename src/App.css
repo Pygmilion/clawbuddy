@@ -1456,3 +1456,89 @@ body,
   animation: boot-spin 0.7s linear infinite;
   flex: none;
 }
+
+/* Claw 结构化输出：工具操作卡片 */
+.tool-card {
+  margin: 8px 0;
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.02);
+  overflow: hidden;
+}
+[data-theme="dark"] .tool-card { border-color: rgba(255, 255, 255, 0.1); background: rgba(255, 255, 255, 0.03); }
+.tool-card.failed { border-color: rgba(220, 38, 38, 0.35); }
+.tool-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  color: rgba(15, 23, 42, 0.75);
+  text-align: left;
+}
+.tool-head:disabled { cursor: default; }
+[data-theme="dark"] .tool-head { color: rgba(229, 231, 235, 0.75); }
+.tool-icon { flex: none; font-size: 14px; }
+.tool-label { font-weight: 600; flex: none; }
+.tool-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgba(15, 23, 42, 0.45);
+  font-size: 12px;
+}
+[data-theme="dark"] .tool-title { color: rgba(229, 231, 235, 0.45); }
+.tool-status { flex: none; display: inline-flex; align-items: center; }
+.tool-ok { color: #16a34a; }
+.tool-x { color: #dc2626; }
+.tool-chevron { flex: none; transition: transform 0.2s ease; color: rgba(15, 23, 42, 0.4); }
+.tool-chevron.open { transform: rotate(180deg); }
+.tool-output {
+  margin: 0;
+  padding: 10px 12px;
+  border-top: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(15, 23, 42, 0.03);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: rgba(15, 23, 42, 0.8);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 320px;
+  overflow: auto;
+}
+[data-theme="dark"] .tool-output { border-color: rgba(255,255,255,0.08); background: rgba(0,0,0,0.25); color: rgba(229,231,235,0.85); }
+
+/* 深度思考块 */
+.reasoning-block {
+  margin: 8px 0;
+  border-left: 2px solid rgba(245, 158, 11, 0.4);
+  padding-left: 2px;
+}
+.reasoning-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 12.5px;
+  color: rgba(15, 23, 42, 0.5);
+}
+[data-theme="dark"] .reasoning-head { color: rgba(229, 231, 235, 0.5); }
+.reasoning-body {
+  padding: 6px 10px 8px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: rgba(15, 23, 42, 0.55);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+[data-theme="dark"] .reasoning-body { color: rgba(229, 231, 235, 0.55); }

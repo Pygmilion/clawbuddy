@@ -4,7 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { Markdown, MessageCopy } from './Markdown';
-import type { ChatMessage, SessionSummary } from './hooks/useChat';
+import type { ChatMessage, SessionSummary, AgentBlock } from './hooks/useChat';
 import {
   sendChatMessage,
   getChannelRunning,
@@ -74,6 +74,76 @@ function WorkingIndicator({ compact }: { compact?: boolean }) {
     </div>
   );
 }
+
+// 工具名 → 友好标签 + 图标（对标 WorkBuddy 的「运行命令 / 收集资料」样式）。
+function toolMeta(name: string): { label: string; icon: string } {
+  const n = name.toLowerCase();
+  if (n.includes('web_search') || n.includes('search')) return { label: '联网搜索', icon: '🔍' };
+  if (n.includes('web_fetch') || n.includes('fetch') || n.includes('browse')) return { label: '抓取网页', icon: '🌐' };
+  if (n.includes('exec') || n.includes('command') || n.includes('shell') || n.includes('bash')) return { label: '运行命令', icon: '⌘' };
+  if (n.includes('file') || n.includes('read') || n.includes('write') || n.includes('edit')) return { label: '读写文件', icon: '📄' };
+  if (n.includes('memory')) return { label: '记忆', icon: '🧠' };
+  return { label: name || '操作', icon: '🔧' };
+}
+
+// 工具操作卡片：默认折叠，点标题展开查看命令/输出。运行中转圈，完成显示 ✓/✗。
+function ToolCard({ block }: { block: Extract<AgentBlock, { kind: 'tool' }> }) {
+  const [open, setOpen] = useState(false);
+  const { label, icon } = toolMeta(block.name);
+  const detail = block.output || block.error;
+  return (
+    <div className={`tool-card ${block.status}`}>
+      <button type="button" className="tool-head" onClick={() => setOpen((o) => !o)} disabled={!detail}>
+        <span className="tool-icon">{icon}</span>
+        <span className="tool-label">{label}</span>
+        <span className="tool-title" title={block.title}>{block.title}</span>
+        <span className="tool-status">
+          {block.status === 'running' ? (
+            <span className="work-spinner" aria-hidden />
+          ) : block.status === 'failed' ? (
+            <span className="tool-x">✗</span>
+          ) : (
+            <span className="tool-ok">✓</span>
+          )}
+        </span>
+        {detail && <span className={`tool-chevron ${open ? 'open' : ''}`}>⌄</span>}
+      </button>
+      {open && detail && <pre className="tool-output">{detail}</pre>}
+    </div>
+  );
+}
+
+// 深度思考块：默认折叠。
+function ReasoningBlock({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="reasoning-block">
+      <button type="button" className="reasoning-head" onClick={() => setOpen((o) => !o)}>
+        <span>💭 深度思考</span>
+        <span className={`tool-chevron ${open ? 'open' : ''}`}>⌄</span>
+      </button>
+      {open && <div className="reasoning-body">{text}</div>}
+    </div>
+  );
+}
+
+// 按顺序渲染 Claw 的结构化输出块（正文 / 思考 / 工具操作）。
+function MessageBlocks({ blocks }: { blocks: AgentBlock[] }) {
+  return (
+    <>
+      {blocks.map((b, i) => {
+        if (b.kind === 'text') {
+          return b.text.trim() ? <Markdown key={i}>{b.text}</Markdown> : null;
+        }
+        if (b.kind === 'reasoning') {
+          return b.text.trim() ? <ReasoningBlock key={i} text={b.text} /> : null;
+        }
+        return <ToolCard key={i} block={b} />;
+      })}
+    </>
+  );
+}
+
 
 const BOOT_MESSAGES = ['正在唤醒 Claw…', '启动本地网关…', '预热模型与插件…', '马上就好…'];
 
@@ -270,6 +340,18 @@ function App() {
       abortRef.current = controller;
 
       let assistant = '';
+      let latestBlocks: AgentBlock[] = [];
+
+      const applyAssistant = () => {
+        setMessages((current) => {
+          const last = current[current.length - 1];
+          const msg: ChatMessage = { role: 'assistant', content: assistant, blocks: latestBlocks };
+          if (last?.role === 'assistant') {
+            return [...current.slice(0, -1), msg];
+          }
+          return [...current, msg];
+        });
+      };
 
       try {
         await sendChatMessage(next, {
@@ -278,13 +360,11 @@ function App() {
           signal: controller.signal,
           onChunk: (chunk) => {
             assistant += chunk;
-            setMessages((current) => {
-              const last = current[current.length - 1];
-              if (last?.role === 'assistant') {
-                return [...current.slice(0, -1), { role: 'assistant', content: assistant }];
-              }
-              return [...current, { role: 'assistant', content: assistant }];
-            });
+            applyAssistant();
+          },
+          onBlocks: (blocks) => {
+            latestBlocks = blocks;
+            applyAssistant();
           },
         });
 
@@ -293,7 +373,7 @@ function App() {
           if (last?.role === 'assistant') {
             return current;
           }
-          return [...current, { role: 'assistant', content: assistant }];
+          return [...current, { role: 'assistant', content: assistant, blocks: latestBlocks }];
         });
       } catch (err) {
         setError(err instanceof Error ? err.message : '发送消息失败');
@@ -492,16 +572,21 @@ function App() {
                           </div>
                         )}
                         <div className="message-body">
-                          {message.content ? (
-                            isUser ? (
-                              <div className="plain-text">{message.content}</div>
-                            ) : (
-                              <Markdown>{message.content}</Markdown>
-                            )
+                          {isUser ? (
+                            <div className="plain-text">{message.content}</div>
+                          ) : message.blocks && message.blocks.length > 0 ? (
+                            <MessageBlocks blocks={message.blocks} />
+                          ) : message.content ? (
+                            <Markdown>{message.content}</Markdown>
+                          ) : isStreaming ? (
+                            <WorkingIndicator />
                           ) : (
-                            isStreaming ? <WorkingIndicator /> : <span className="typing">…</span>
+                            <span className="typing">…</span>
                           )}
-                          {isStreaming && message.content && <WorkingIndicator compact />}
+                          {isStreaming &&
+                            (message.content || (message.blocks && message.blocks.length > 0)) && (
+                              <WorkingIndicator compact />
+                            )}
                         </div>
                       </div>
                     </div>

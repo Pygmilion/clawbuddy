@@ -19,6 +19,7 @@ const REQUEST_SCOPES = ['operator.admin', 'operator.write', 'operator.read'];
 
 export type SendChatOptions = {
   onChunk?: (chunk: string) => void;
+  onBlocks?: (blocks: AgentBlock[]) => void;
   signal?: AbortSignal;
   provider?: string;
   model?: string;
@@ -27,9 +28,24 @@ export type SendChatOptions = {
   attachments?: unknown[];
 };
 
+// 结构化输出块：把 Claw 一次回复里的「思考 / 工具操作 / 正文」拆成有序块，前端分样式渲染。
+export type AgentBlock =
+  | { kind: 'text'; text: string }
+  | { kind: 'reasoning'; text: string }
+  | {
+      kind: 'tool';
+      id: string;
+      name: string;
+      title: string;
+      status: 'running' | 'ok' | 'failed';
+      output?: string;
+      error?: string;
+    };
+
 export interface ChatMessage {
   role: string;
   content: string;
+  blocks?: AgentBlock[];
 }
 
 type GatewayStatus = 'checking' | 'ready' | 'starting' | 'failed';
@@ -429,6 +445,89 @@ export async function sendChatMessage(
   let emitted = '';
   let runId: string | null = null;
 
+  // 结构化块：把 agent 事件流（assistant 正文 / tool 工具操作 / reasoning 思考）拼成有序块列表。
+  const blocks: AgentBlock[] = [];
+  const toolIndexById = new Map<string, number>();
+  const notifyBlocks = () => options.onBlocks?.(blocks.map((b) => ({ ...b })));
+
+  const appendText = (kind: 'text' | 'reasoning', delta: string) => {
+    if (!delta) return;
+    const last = blocks[blocks.length - 1];
+    if (last && last.kind === kind) {
+      last.text += delta;
+    } else {
+      blocks.push({ kind, text: delta });
+    }
+  };
+
+  // 处理 agent 事件的一条子流（assistant/item/command_output/lifecycle）。
+  const handleAgentEvent = (payload: Record<string, unknown>) => {
+    const stream = payload.stream as string | undefined;
+    const data = (payload.data ?? {}) as Record<string, unknown>;
+    if (stream === 'assistant') {
+      const delta = (data.delta as string) ?? '';
+      appendText('text', delta);
+      const full = (data.text as string) ?? '';
+      if (full) {
+        const chunk = full.startsWith(emitted) ? full.slice(emitted.length) : delta;
+        if (chunk && onChunk) onChunk(chunk);
+        emitted = full;
+      }
+      notifyBlocks();
+      return;
+    }
+    if (stream === 'reasoning' || stream === 'thinking') {
+      appendText('reasoning', (data.delta as string) ?? (data.text as string) ?? '');
+      notifyBlocks();
+      return;
+    }
+    // 工具操作：item(kind=tool) 建/更新卡片；command_output 补充输出；按 toolCallId 归并。
+    const toolCallId = (data.toolCallId as string) || (data.itemId as string) || '';
+    if (!toolCallId) return;
+    const key = toolCallId.replace(/^(tool|command):/, '');
+    const statusRaw = data.status as string | undefined;
+    const status: 'running' | 'ok' | 'failed' =
+      statusRaw === 'failed' ? 'failed' : statusRaw === 'running' ? 'running' : 'ok';
+
+    if (stream === 'item' && data.kind === 'tool') {
+      let idx = toolIndexById.get(key);
+      if (idx === undefined) {
+        idx = blocks.length;
+        toolIndexById.set(key, idx);
+        blocks.push({
+          kind: 'tool',
+          id: key,
+          name: (data.name as string) || 'tool',
+          title: (data.title as string) || (data.name as string) || '操作',
+          status: 'running',
+        });
+      }
+      const blk = blocks[idx];
+      if (blk.kind === 'tool') {
+        if (data.title) blk.title = data.title as string;
+        if (data.name) blk.name = data.name as string;
+        if (data.phase === 'end') blk.status = status;
+        if (data.error) blk.error = data.error as string;
+      }
+      notifyBlocks();
+      return;
+    }
+    if (stream === 'command_output' || (stream === 'item' && data.kind === 'command')) {
+      const idx = toolIndexById.get(key);
+      if (idx === undefined) return;
+      const blk = blocks[idx];
+      if (blk.kind === 'tool') {
+        const out = (data.output as string) ?? (data.summary as string) ?? '';
+        if (out) blk.output = out;
+        if (data.phase === 'end' && typeof data.exitCode === 'number') {
+          blk.status = data.exitCode === 0 ? 'ok' : 'failed';
+        }
+        if (data.error) blk.error = data.error as string;
+      }
+      notifyBlocks();
+    }
+  };
+
   return new Promise<string>((resolve, reject) => {
     const timeout = setTimeout(() => {
       cleanup();
@@ -445,16 +544,24 @@ export async function sendChatMessage(
     signal?.addEventListener('abort', onAbort);
 
     const unsubscribe = client.onEvent((event, rawPayload) => {
-      if (event !== 'chat') {
-        return;
-      }
       const payload = (rawPayload ?? {}) as Record<string, unknown>;
-      console.log('[sendChatMessage] chat event', { event, runId, state: payload.state });
-      // 仅处理本次请求对应 run 的回复。
+      // 仅处理本次请求对应 run 的事件（runId 已知后严格过滤）。
       if (runId && payload.runId && payload.runId !== runId) {
         return;
       }
 
+      // agent 事件流：工具操作 / 正文 / 思考 → 结构化块。
+      if (event === 'agent') {
+        if (!runId && typeof payload.runId === 'string') {
+          runId = payload.runId;
+        }
+        handleAgentEvent(payload);
+        return;
+      }
+
+      if (event !== 'chat') {
+        return;
+      }
       const state = payload.state as string | undefined;
       if (state === 'error') {
         cleanup();
@@ -464,10 +571,12 @@ export async function sendChatMessage(
 
       const fullText = extractAssistantText(payload);
       if (fullText) {
-        // chat 事件携带累积文本，按差量推送增量片段。
-        const chunk = fullText.startsWith(emitted) ? fullText.slice(emitted.length) : fullText;
-        if (chunk && onChunk) {
-          onChunk(chunk);
+        // 若没有 agent.assistant 流兜底（旧网关），用 chat 事件的累积文本补一个正文块。
+        if (blocks.length === 0) {
+          const chunk = fullText.startsWith(emitted) ? fullText.slice(emitted.length) : fullText;
+          if (chunk && onChunk) onChunk(chunk);
+          appendText('text', chunk);
+          notifyBlocks();
         }
         emitted = fullText;
       }
