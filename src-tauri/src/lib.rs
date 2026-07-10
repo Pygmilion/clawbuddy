@@ -55,16 +55,29 @@ fn write_stepfun_key(key: &str) -> Result<(), String> {
         .map_err(|e| format!("无法写入凭据: {e}"))
 }
 
+// 统一构造子进程：在 Windows 上带 CREATE_NO_WINDOW，避免每个子进程（node/网关/npm/robocopy 等）
+// 弹出黑色控制台窗口（用户反馈「点一个应用全都打开了」）。非 Windows 平台无副作用。
+fn hidden_command<S: AsRef<std::ffi::OsStr>>(program: S) -> Command {
+    #[allow(unused_mut)]
+    let mut cmd = Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    cmd
+}
+
 // 杀掉占用网关端口的进程（openclaw 启动器会自我 respawn，按端口杀最可靠）。
 #[cfg(not(windows))]
 fn kill_gateway_on_port() {
-    if let Ok(output) = Command::new("lsof")
+    if let Ok(output) = hidden_command("lsof")
         .args(["-ti", &format!("tcp:{GATEWAY_PORT}"), "-sTCP:LISTEN"])
         .output()
     {
         if let Ok(text) = std::str::from_utf8(&output.stdout) {
             for pid in text.split_whitespace() {
-                let _ = Command::new("kill").arg("-9").arg(pid).status();
+                let _ = hidden_command("kill").arg("-9").arg(pid).status();
             }
         }
     }
@@ -73,7 +86,7 @@ fn kill_gateway_on_port() {
 #[cfg(windows)]
 fn kill_gateway_on_port() {
     // netstat -ano 找到监听该端口的 PID，再 taskkill。
-    if let Ok(output) = Command::new("netstat").args(["-ano", "-p", "tcp"]).output() {
+    if let Ok(output) = hidden_command("netstat").args(["-ano", "-p", "tcp"]).output() {
         let text = String::from_utf8_lossy(&output.stdout);
         let needle = format!(":{GATEWAY_PORT}");
         let mut pids: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -85,7 +98,7 @@ fn kill_gateway_on_port() {
             }
         }
         for pid in pids {
-            let _ = Command::new("taskkill").args(["/F", "/PID", &pid]).status();
+            let _ = hidden_command("taskkill").args(["/F", "/PID", &pid]).status();
         }
     }
 }
@@ -268,7 +281,7 @@ fn get_node_path() -> Result<String, String> {
         return Ok(path.display().to_string());
     }
 
-    let output = Command::new("which")
+    let output = hidden_command("which")
         .arg("node")
         .output()
         .map_err(|e| format!("无法定位 Node.js: {e}"))?;
@@ -322,7 +335,7 @@ fn make_dir_link(target: &std::path::Path, link: &std::path::Path) {
     }
     #[cfg(windows)]
     {
-        let _ = std::process::Command::new("cmd")
+        let _ = hidden_command("cmd")
             .args(["/C", "mklink", "/J"])
             .arg(link)
             .arg(target)
@@ -334,13 +347,13 @@ fn make_dir_link(target: &std::path::Path, link: &std::path::Path) {
 fn copy_tree(src: &std::path::Path, dst: &std::path::Path) {
     #[cfg(not(windows))]
     {
-        let _ = std::process::Command::new("cp").arg("-R").arg(src).arg(dst).status();
+        let _ = hidden_command("cp").arg("-R").arg(src).arg(dst).status();
     }
     #[cfg(windows)]
     {
         let _ = fs::create_dir_all(dst);
         // robocopy 把 src 内容复制进 dst；返回码 <8 视为成功，这里忽略返回码。
-        let _ = std::process::Command::new("robocopy")
+        let _ = hidden_command("robocopy")
             .arg(src)
             .arg(dst)
             .args(["/E", "/NFL", "/NDL", "/NJH", "/NJS", "/NP"])
@@ -655,7 +668,7 @@ fn ensure_stepfun_provider(state_dir: &std::path::Path) {
     }
     let Ok(node) = get_node_path() else { return };
     let script = bundled_script_path();
-    let _ = Command::new(&node)
+    let _ = hidden_command(&node)
         .env("OPENCLAW_STATE_DIR", state_dir)
         .arg(&script)
         .args(["plugins", "install", "@openclaw/stepfun-provider"])
@@ -749,7 +762,7 @@ fn start_gateway_process() -> Result<(), String> {
 
     // 关键：--port/--allow-unconfigured 属于 `gateway run` 子命令，必须带上 `run`。
     // OPENCLAW_STATE_DIR 指向 ClawBuddy 独立状态目录，与用户的 ~/.openclaw 完全隔离。
-    let mut command = Command::new(node);
+    let mut command = hidden_command(node);
     command.env("OPENCLAW_STATE_DIR", &state_dir);
     // 若用户已在界面填入 StepFun key，则通过环境变量注入（openclaw stepfun 插件读取 STEPFUN_API_KEY）。
     if let Some(key) = read_stepfun_key() {
@@ -856,7 +869,7 @@ pub async fn watch_process(app: AppHandle, manager: GatewayManager) {
             continue;
         }
 
-        let child_status = Command::new(get_node_path().unwrap_or_else(|_| "node".into()))
+        let child_status = hidden_command(get_node_path().unwrap_or_else(|_| "node".into()))
             .arg("-e")
             .arg("process.exit(0)")
             .status();
@@ -1293,7 +1306,7 @@ fn ensure_weixin_plugin(state_dir: &std::path::Path) -> Result<std::path::PathBu
     let node = get_node_path()?;
     let script = bundled_script_path();
     let run_cli = |args: &[&str]| -> Result<(), String> {
-        let status = Command::new(&node)
+        let status = hidden_command(&node)
             .env("OPENCLAW_STATE_DIR", state_dir)
             .arg(&script)
             .args(args)
@@ -1339,7 +1352,7 @@ async fn wechat_login_start(app: AppHandle, manager: State<'_, GatewayManager>) 
         };
         let script = bundled_script_path();
 
-        let child = Command::new(&node)
+        let child = hidden_command(&node)
             .env("OPENCLAW_STATE_DIR", &state_dir)
             .arg(&script)
             .arg("channels")
@@ -1437,7 +1450,7 @@ fn ensure_feishu_plugin(state_dir: &std::path::Path) -> Result<std::path::PathBu
     let node = get_node_path()?;
     let script = bundled_script_path();
     let run_cli = |args: &[&str]| -> Result<(), String> {
-        let status = Command::new(&node)
+        let status = hidden_command(&node)
             .env("OPENCLAW_STATE_DIR", state_dir)
             .arg(&script)
             .args(args)
@@ -1530,7 +1543,7 @@ async fn feishu_login_start(app: AppHandle, manager: State<'_, GatewayManager>) 
             }
         };
 
-        let child = Command::new(&node)
+        let child = hidden_command(&node)
             .env("OPENCLAW_STATE_DIR", &state_dir)
             .arg(&helper)
             .arg(&qr_module)
@@ -1587,7 +1600,7 @@ async fn feishu_login_start(app: AppHandle, manager: State<'_, GatewayManager>) 
 fn run_openclaw_capture(state_dir: &std::path::Path, args: &[&str]) -> Result<String, String> {
     let node = get_node_path()?;
     let script = bundled_script_path();
-    let output = Command::new(&node)
+    let output = hidden_command(&node)
         .env("OPENCLAW_STATE_DIR", state_dir)
         .arg(&script)
         .args(args)
@@ -1616,7 +1629,7 @@ fn pairing_approve(channel: String, code: String) -> Result<(), String> {
     let state_dir = gateway_state_dir();
     let node = get_node_path()?;
     let script = bundled_script_path();
-    let status = Command::new(&node)
+    let status = hidden_command(&node)
         .env("OPENCLAW_STATE_DIR", &state_dir)
         .arg(&script)
         .args(["pairing", "approve", "--channel", &channel, &code, "--notify"])
@@ -1631,7 +1644,7 @@ fn pairing_approve(channel: String, code: String) -> Result<(), String> {
 // ===== 应用内升级 OpenClaw =====
 
 fn resolve_npm() -> Result<String, String> {
-    if let Ok(output) = Command::new("which").arg("npm").output() {
+    if let Ok(output) = hidden_command("which").arg("npm").output() {
         if output.status.success() {
             let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
             if !path.is_empty() {
@@ -1645,7 +1658,7 @@ fn resolve_npm() -> Result<String, String> {
         }
     }
     // 从 `which node` 同级推导 npm。
-    if let Ok(output) = Command::new("which").arg("node").output() {
+    if let Ok(output) = hidden_command("which").arg("node").output() {
         if output.status.success() {
             let node = String::from_utf8_lossy(&output.stdout).trim().to_string();
             if let Some(npm) = std::path::Path::new(&node).parent().map(|d| d.join("npm")) {
@@ -1676,7 +1689,7 @@ async fn upgrade_openclaw(manager: State<'_, GatewayManager>) -> Result<String, 
     let npm = resolve_npm()?;
     let root = project_root();
 
-    let output = Command::new(&npm)
+    let output = hidden_command(&npm)
         .current_dir(&root)
         .args(["install", "openclaw@latest", "--no-audit", "--no-fund"])
         .output()
@@ -1709,7 +1722,7 @@ fn check_openclaw_update() -> Result<serde_json::Value, String> {
         .unwrap_or_else(|| "unknown".to_string());
 
     let npm = resolve_npm()?;
-    let output = Command::new(&npm)
+    let output = hidden_command(&npm)
         .args(["view", "openclaw", "version"])
         .output()
         .map_err(|e| format!("检查更新失败: {e}"))?;
@@ -1809,7 +1822,7 @@ async fn export_diagnostics() -> Result<String, String> {
         }
     }
     if let Ok(node) = get_node_path() {
-        if let Ok(o) = Command::new(&node).arg("--version").output() {
+        if let Ok(o) = hidden_command(&node).arg("--version").output() {
             s.push_str(&format!("- node: {}\n", String::from_utf8_lossy(&o.stdout).trim()));
         }
     }

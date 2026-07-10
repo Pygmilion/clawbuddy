@@ -52,6 +52,37 @@ function Dot({ tone }: { tone: Tone }) {
   return <span className={`status-dot ${tone}`} />;
 }
 
+const BOOT_MESSAGES = ['正在唤醒 Claw…', '启动本地网关…', '预热模型与插件…', '马上就好…'];
+
+// 启动画面：网关就绪前的过渡，避免用户对着空白/报错干等。
+function StartupSplash({ slow, onEnter }: { slow: boolean; onEnter: () => void }) {
+  const [step, setStep] = useState(0);
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setStep((s) => (s + 1) % BOOT_MESSAGES.length);
+    }, 2200);
+    return () => window.clearInterval(timer);
+  }, []);
+  return (
+    <div className="boot-splash">
+      <div className="boot-inner">
+        <div className="boot-emoji">🦞</div>
+        <div className="boot-title">ClawBuddy</div>
+        <div className="boot-spinner" aria-hidden />
+        <div className="boot-status">{BOOT_MESSAGES[step]}</div>
+        {slow && (
+          <div className="boot-slow">
+            <p>首次启动要预热模型和插件，稍慢是正常的。</p>
+            <button type="button" className="boot-enter" onClick={onEnter}>
+              直接进入
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 const VIEW_TITLES: Record<View, string> = {
   chat: '对话',
   settings: '设置',
@@ -83,12 +114,31 @@ function App() {
   const [historyOpen, setHistoryOpen] = useState(true);
   const [historyExpanded, setHistoryExpanded] = useState(false);
   const [keyConfigured, setKeyConfigured] = useState<boolean | null>(null);
+  // 启动画面：网关首次就绪前显示，避免用户对着空白干等。
+  const [booted, setBooted] = useState(false);
+  const [bootSlow, setBootSlow] = useState(false);
 
   useEffect(() => {
     invoke<boolean>('get_stepfun_key_status')
       .then(setKeyConfigured)
       .catch(() => setKeyConfigured(true));
   }, []);
+
+  // 网关一旦就绪就收起启动画面（此后不再显示）。
+  useEffect(() => {
+    if (gatewayReady) {
+      setBooted(true);
+    }
+  }, [gatewayReady]);
+
+  // 启动偏慢（首启动要预热模型/插件）时给个「直接进入」出口，别把人卡死。
+  useEffect(() => {
+    if (booted) {
+      return;
+    }
+    const timer = window.setTimeout(() => setBootSlow(true), 40000);
+    return () => window.clearTimeout(timer);
+  }, [booted]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -270,9 +320,12 @@ function App() {
   const feishuTone = channelTone(feishuRunning);
   const visibleSessions = sessions.filter((s) => !s.key.endsWith(':main'));
   const shownSessions = historyExpanded ? visibleSessions : visibleSessions.slice(0, 5);
+  // 启动画面：仅在「已配置 key 但网关还没首次就绪」时挡一下；未配置 key 时直接进入以显示配置卡。
+  const showSplash = keyConfigured !== false && !booted;
 
   return (
     <div className="app">
+      {showSplash && <StartupSplash slow={bootSlow} onEnter={() => setBooted(true)} />}
       <aside className={`sidebar ${sidebarOpen ? 'open' : 'closed'}`}>
         <div className="sidebar-header">
           <span className="sidebar-title">

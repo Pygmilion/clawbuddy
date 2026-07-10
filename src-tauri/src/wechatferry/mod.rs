@@ -254,6 +254,8 @@ impl WeChatFerryManager {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        #[cfg(windows)]
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
 
         command.spawn().map_err(|e| format!("启动 wechatferry 失败: {e}"))
     }
@@ -475,6 +477,8 @@ impl WeChatFerryManager {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        #[cfg(windows)]
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
 
         let mut child = command.spawn().map_err(|e| e.to_string())?;
         let mut stdin = child.stdin.take().ok_or("缺少 stdin")?;

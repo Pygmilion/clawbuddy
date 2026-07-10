@@ -1325,3 +1325,84 @@ body,
 .empty-hero p { margin: 8px 0 0; font-size: 14px; color: rgba(15, 23, 42, 0.5); }
 [data-theme="dark"] .empty-hero h1 { color: #f3f4f6; }
 [data-theme="dark"] .empty-hero p { color: rgba(229, 231, 235, 0.5); }
+
+/* 启动画面 */
+.boot-splash {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f8fafc;
+  animation: boot-fade-in 240ms ease;
+}
+[data-theme="dark"] .boot-splash { background: #0f1117; }
+@keyframes boot-fade-in { from { opacity: 0; } to { opacity: 1; } }
+.boot-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 32px;
+  text-align: center;
+}
+.boot-emoji {
+  font-size: 56px;
+  line-height: 1;
+  animation: boot-bob 1.8s ease-in-out infinite;
+}
+@keyframes boot-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+.boot-title {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: #0f172a;
+}
+[data-theme="dark"] .boot-title { color: #f3f4f6; }
+.boot-spinner {
+  width: 26px;
+  height: 26px;
+  margin-top: 4px;
+  border: 3px solid rgba(245, 158, 11, 0.25);
+  border-top-color: #f59e0b;
+  border-radius: 50%;
+  animation: boot-spin 0.8s linear infinite;
+}
+@keyframes boot-spin { to { transform: rotate(360deg); } }
+.boot-status {
+  font-size: 14px;
+  color: rgba(15, 23, 42, 0.55);
+  min-height: 20px;
+  transition: opacity 200ms ease;
+}
+[data-theme="dark"] .boot-status { color: rgba(229, 231, 235, 0.55); }
+.boot-slow {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.boot-slow p {
+  margin: 0;
+  font-size: 12.5px;
+  color: rgba(15, 23, 42, 0.45);
+  max-width: 260px;
+}
+[data-theme="dark"] .boot-slow p { color: rgba(229, 231, 235, 0.45); }
+.boot-enter {
+  padding: 7px 18px;
+  border: none;
+  border-radius: 8px;
+  background: #0f172a;
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+  transition: opacity 150ms ease;
+}
+.boot-enter:hover { opacity: 0.85; }
+[data-theme="dark"] .boot-enter { background: #e5e7eb; color: #0f1117; }
