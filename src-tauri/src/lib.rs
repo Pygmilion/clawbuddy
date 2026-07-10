@@ -1897,6 +1897,16 @@ pub fn run() {
         .manage(WeChatFerryManager::default())
         .manage(SharedFeishuState::new(Default::default()))
         .plugin(tauri_plugin_opener::init())
+        .on_window_event(|window, event| {
+            // 关闭窗口时只隐藏到托盘，保持 App 进程与网关常驻，避免每次重开都冷启动（预热要十几秒）。
+            // 真正退出请用托盘菜单「退出」。
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             toggle_window,
             check_gateway_ready,
@@ -1956,6 +1966,8 @@ pub fn run() {
                     match event.id().as_ref() {
                         "show" => show_main_window(app),
                         "quit" => {
+                            // 真正退出：顺手把常驻网关也关掉，避免留下孤儿进程占端口。
+                            kill_gateway_on_port();
                             let _ = app.exit(0);
                         }
                         _ => {}
