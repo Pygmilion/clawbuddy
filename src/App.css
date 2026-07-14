@@ -233,6 +233,7 @@ body,
   width: 30px;
   height: 30px;
   border-radius: 8px;
+  object-fit: contain;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1320,7 +1321,7 @@ body,
   text-align: center;
   color: rgba(15, 23, 42, 0.7);
 }
-.empty-emoji { font-size: 44px; margin-bottom: 8px; }
+.empty-emoji { width: 68px; height: 68px; object-fit: contain; margin-bottom: 8px; }
 .empty-hero h1 { margin: 0; font-size: 28px; font-weight: 700; color: #0f172a; }
 .empty-hero p { margin: 8px 0 0; font-size: 14px; color: rgba(15, 23, 42, 0.5); }
 [data-theme="dark"] .empty-hero h1 { color: #f3f4f6; }
@@ -1348,8 +1349,9 @@ body,
   text-align: center;
 }
 .boot-emoji {
-  font-size: 56px;
-  line-height: 1;
+  width: 84px;
+  height: 84px;
+  object-fit: contain;
   animation: boot-bob 1.8s ease-in-out infinite;
 }
 @keyframes boot-bob {

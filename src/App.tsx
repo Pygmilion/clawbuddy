@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { Markdown, MessageCopy } from './Markdown';
+import mascot from './assets/mascot.png';
 import type { ChatMessage, SessionSummary, AgentBlock } from './hooks/useChat';
 import {
   sendChatMessage,
@@ -159,7 +160,7 @@ function StartupSplash({ slow, onEnter }: { slow: boolean; onEnter: () => void }
   return (
     <div className="boot-splash">
       <div className="boot-inner">
-        <div className="boot-emoji">🦞</div>
+        <img className="boot-emoji" src={mascot} alt="ClawBuddy" />
         <div className="boot-title">ClawBuddy</div>
         <div className="boot-spinner" aria-hidden />
         <div className="boot-status">{BOOT_MESSAGES[step]}</div>
@@ -553,7 +554,7 @@ function App() {
                 )}
                 {messages.length === 0 && (
                   <div className="empty-hero">
-                    <div className="empty-emoji">🦞</div>
+                    <img className="empty-emoji" src={mascot} alt="ClawBuddy" />
                     <h1>ClawBuddy</h1>
                     <p>你的本地 AI 伙伴 · 微信 / 飞书一处对话</p>
                   </div>
@@ -563,7 +564,7 @@ function App() {
                   const isStreaming = loading && !isUser && index === messages.length - 1;
                   return (
                     <div key={index} className={`message ${message.role}`}>
-                      {!isUser && <div className="message-avatar">🦞</div>}
+                      {!isUser && <img className="message-avatar" src={mascot} alt="Claw" />}
                       <div className="message-content">
                         {!isUser && (
                           <div className="message-head">
